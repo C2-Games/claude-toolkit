@@ -1,34 +1,33 @@
 # claude-toolkit
 
-Organization library of generic Claude Code skills, agents, commands, and hooks. Nothing here runs on its own — each item is meant to be copied (or symlinked) into another project's `.claude/` to change how Claude behaves *there*.
+A personal library of Claude Code building blocks. Nothing here runs on its own —
+each piece is copied into another project's `.claude/` to change how Claude behaves
+*there*.
 
-## Layout
+## `language-skills/`
 
-| Dir | What's in it |
+Code-style skills, one per language. Each defines the naming, commenting, docstring,
+and formatting conventions Claude applies when writing or editing that language —
+auto-invoked, not waited on.
+
+| Path | Skill |
 |---|---|
-| `skills/<language>/<skill-name>/` | Code style/test conventions Claude applies when writing that language, anywhere. |
-| `agents/<agent-name>/<agent-name>.md` | Subagents a main session can dispatch (implement a plan task, review a diff, draft an issue). |
-| `commands/<category>/*.md` | Slash commands, grouped by the workflow they belong to. |
-| `hooks/<category>/*.py` | Hook scripts a target repo can wire into its own `settings.json`. |
-| `docs/` | Longer guides for multi-file features (e.g. how to adopt a whole pipeline). |
+| `language-skills/python/python-style/` | Python style — numpy docstrings, mypy typing, black at 80 |
+| `language-skills/python/python-tests/` | pytest conventions (companion to `python-style`) |
+| `language-skills/c++/cpp-style/` | C++ style — Google base + Allman braces, naming, Doxygen placement |
 
-## Current contents
+To use one: copy the skill directory into a project's `.claude/skills/`.
 
-- **Skills**: `cpp-style`, `python-style`, `python-tests` — style guides Claude auto-invokes
-  when writing C++ or Python.
-- **Issue-workflow pipeline**: `agents/{implementer,reviewer,issue-drafter}`,
-  `commands/issue-workflow/*`, `hooks/issue-workflow/issue_gate.py`, `hooks/toolchain/*` — an
-  issue → branch → plan → implement → review flow. See `docs/ISSUE_WORKFLOW.md` for what it
-  does and how to configure it in a target repo.
+## `workflows/`
 
-## Adding something new
+Complete `.claude/` setups — hooks, commands, agents, and docs that together impose
+one way of working on a repo. They're generic until you run the workflow's
+`INIT.md`, which tailors them to the project and then deletes itself.
 
-Everything here must be generic — usable in any target repo, not hard-wired to one project's
-paths, usernames, or architecture. If it only makes sense for one specific repo, it belongs
-in that repo's own `.claude/`, not here. See `CLAUDE.md` for the layout conventions to follow
-when adding a skill/agent/command/hook.
+See [`workflows/README.md`](workflows/README.md) for the list of workflows, what
+each is for, and how to adopt one.
 
 ## This repo's own `.claude/settings.json`
 
-Denies `git commit`/`git push` here — nothing in this repo should be committed or pushed by
-Claude without the user doing it directly.
+Denies `git commit` / `git push` here — nothing in this repo should be committed or
+pushed by Claude without the user doing it directly.

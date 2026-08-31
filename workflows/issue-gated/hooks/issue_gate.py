@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""PreToolUse hook: no edit to tracked project files without a GitHub issue on record.
+"""PreToolUse hook: no edit to tracked project files without a GitHub issue.
 
-Optional pattern for a repo that wants every change to trace to an issue. Pair it with
-an issue-tracking workflow (e.g. this toolkit's `commands/issue-workflow/start-issue.md`)
-that writes `.claude/.current-issue`; until that file exists, Edit and Write on tracked
-files are denied.
+Every change in this repo traces to an issue. This enforces that mechanically
+instead of relying on remembering it.
+
+/start-issue records the active issue(s) in .claude/.current-issue; until it
+does, Edit and Write on tracked files are denied. It also refuses any edit made
+on the default branch, and refuses a record written for a different branch.
 
 Run with --session-start to instead print the active issue as session context.
 
@@ -12,18 +14,17 @@ Deliberately NOT gated:
   * paths outside the repo (scratchpad, ~/.claude/plans)
   * .claude/** -- otherwise this config could never be set up or repaired
 
-Known gap: this covers Edit/Write, not shell redirection through Bash. Gating all of
-Bash would cost far more than the loophole is worth.
+Known gap: this covers Edit/Write, not shell redirection through Bash. Gating
+all of Bash would cost far more than the loophole is worth.
 """
 
 import json
 import os
 import sys
-from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from _toolchain import (  # noqa: E402
+from _hooklib import (  # noqa: E402
     git_branch,
     project_dir,
     read_payload,
@@ -32,19 +33,16 @@ from _toolchain import (  # noqa: E402
 )
 
 RECORD_NAME = os.path.join(".claude", ".current-issue")
+# INIT: set to the repo's default branch if it is not "main".
 MAIN_BRANCH = "main"
 EXEMPT_PREFIXES = (".claude/",)
 
 
-def record_path() -> str:
-    """Absolute path to the current-issue record file."""
-
+def record_path():
     return os.path.join(project_dir(), RECORD_NAME)
 
 
-def load_record() -> dict[str, Any] | None:
-    """Parses the current-issue record, or None if missing/invalid/empty."""
-
+def load_record():
     try:
         with open(record_path(), "r", encoding="utf-8") as handle:
             record = json.load(handle)
@@ -55,15 +53,11 @@ def load_record() -> dict[str, Any] | None:
     return record
 
 
-def issue_list(record: dict[str, Any]) -> str:
-    """Formats a record's issue numbers as a comma-separated `#n, #m` string."""
-
+def issue_list(record):
     return ", ".join("#{}".format(n) for n in record.get("issues", []))
 
 
-def deny(reason: str) -> int:
-    """Writes a PreToolUse deny decision with `reason` to stdout."""
-
+def deny(reason):
     json.dump(
         {
             "hookSpecificOutput": {
@@ -78,21 +72,19 @@ def deny(reason: str) -> int:
     return 0
 
 
-def session_start() -> int:
-    """Writes SessionStart context describing the active issue record, if any."""
-
+def session_start():
     record = load_record()
     if not record:
         context = (
-            "No issue is on record for this repo. If this repo requires every "
-            "change to trace to an issue, run the repo's start-work command "
-            "(e.g. /start-issue <number>) before editing any tracked file."
+            "No GitHub issue is on record for this repo. Every change here must "
+            "trace to an issue: run /start-issue <number> before editing any "
+            "tracked file. Edits are blocked until then."
         )
     else:
         context = (
             "Active issue(s): {issues} on branch `{branch}` (recorded {when}). "
-            "Keep the work scoped to these issues; re-run the start-work command "
-            "to change them.".format(
+            "Keep the work scoped to these issues; run /start-issue again to "
+            "change them.".format(
                 issues=issue_list(record),
                 branch=record.get("branch", "?"),
                 when=record.get("recorded", "?"),
@@ -111,9 +103,7 @@ def session_start() -> int:
     return 0
 
 
-def main() -> int:
-    """Entry point: dispatches to --session-start or the PreToolUse deny check."""
-
+def main():
     if "--session-start" in sys.argv:
         return session_start()
 
@@ -128,26 +118,26 @@ def main() -> int:
     record = load_record()
     if not record:
         return deny(
-            "No issue on record, so `{}` cannot be edited. Every change in this "
-            "repo must trace to an issue. Run the repo's start-work command "
-            "(e.g. /start-issue <number>) first, opening one from this repo's "
-            "issue templates if none covers this work.".format(rel)
+            "No GitHub issue on record, so `{}` cannot be edited. Every change "
+            "in this repo must trace to an issue. Run `/start-issue <number>` "
+            "first, or `/new-issue <description>` to file one if none covers "
+            "this work.".format(rel)
         )
 
     branch = git_branch()
     if branch == MAIN_BRANCH:
         return deny(
             "Refusing to edit `{}` on `{}`. Work happens on a "
-            "`<type>/<description>` branch -- run the repo's start-work command "
-            "to create one.".format(rel, MAIN_BRANCH)
+            "`<type>/<description>` branch -- run `/start-issue <number>` to "
+            "create one.".format(rel, MAIN_BRANCH)
         )
 
     recorded_branch = record.get("branch")
     if branch and recorded_branch and branch != recorded_branch:
         return deny(
             "The issue record is stale: {issues} was recorded for branch "
-            "`{recorded}`, but HEAD is `{actual}`. Re-run the repo's start-work "
-            "command to record the issue(s) for this branch.".format(
+            "`{recorded}`, but HEAD is `{actual}`. Run `/start-issue <number>` "
+            "to record the issue(s) for this branch.".format(
                 issues=issue_list(record),
                 recorded=recorded_branch,
                 actual=branch,
