@@ -8,7 +8,8 @@ are generic: nothing is wired to a specific project until you run the workflow's
 ## Incorporating a workflow into a project
 
 1. Copy the workflow directory into your project and rename it to `.claude/`
-   (swap `issue-gated` for `todo-gated` to adopt that one instead):
+   (swap `issue-gated` for `todo-gated` or `str8-2-main` to adopt one of those
+   instead):
    ```bash
    cp -r /path/to/claude-toolkit/workflows/issue-gated your-project/.claude
    ```
@@ -20,7 +21,7 @@ are generic: nothing is wired to a specific project until you run the workflow's
    — for `issue-gated` — the repo slug), then deletes `INIT.md`.
 4. Read `.claude/WORKFLOW.md` for how it operates, and start with the workflow's
    entry command — `issue-gated`: `/issues` or `/new-issue`; `todo-gated`: `/todos`
-   or `/create-todo`.
+   or `/create-todo`; `str8-2-main`: `/send-it`, or just make a request.
 
 Same steps for a brand-new project or an existing one — the only difference is
 whether step 1 is a plain copy or a merge.
@@ -95,3 +96,43 @@ flowchart TD
 - You already track work as GitHub issues — use `issue-gated`.
 - Throwaway scripts and spikes.
 - You want Claude to commit and push autonomously.
+
+---
+
+## `str8-2-main`
+
+The relaxed one, for people who push straight to `main` and hand Claude direct
+requests. No issue or todo record, no work branch, no `PreToolUse` edit gate, no
+review pass, no architecture check, no doc-drift hook. What it keeps: non-trivial
+work still goes through **plan mode with a task breakdown**, and **`/check`
+(format · lint · tests) is a hard gate before anything ships**. Unlike the other
+two, `git commit`/`git push` are *not* denied — `/ship` verifies `/check` is
+current, makes a header-only commit (`type: description`, no body, no trailers),
+and pushes to the default branch itself. A `SessionStart` hook restates the mode
+and the uncommitted-file count; that is the only hook.
+
+```mermaid
+flowchart TD
+    A["request — direct or /send-it"] --> B{"trivial?<br/>doc/comment-only or one-liner"}
+    B -- "yes" --> C["just do it"]
+    B -- "no" --> D["plan mode<br/>+ task breakdown"]
+    D --> E["implementer agent(s)<br/>parallel where independent"]
+    C --> F["/check<br/>format · lint · tests"]
+    E --> F
+    F -- "failures / not clean" --> D
+    F -- "clean" --> G["/ship<br/>header-only commit + push"]
+    G --> H["change is on origin/&lt;default&gt;"]
+```
+
+**Use it when:**
+- Solo work you push straight to `main`, with no issue or backlog bookkeeping and
+  no work branch.
+- You still want plan-mode discipline and a forced check gate before code lands.
+- You are fine with Claude committing and pushing to `main` once `/check` is clean.
+
+**Don't bother when:**
+- You want a change traced to an issue or a tracked backlog — use `issue-gated` or
+  `todo-gated`.
+- A shared repo where landing straight on `main` without review would step on
+  people.
+- You want `commit`/`push` to stay a deliberate human step — the other two do that.

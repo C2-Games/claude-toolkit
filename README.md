@@ -16,7 +16,10 @@ auto-invoked, not waited on.
 | `language-skills/python/python-tests/` | pytest conventions (companion to `python-style`) |
 | `language-skills/c++/cpp-style/` | C++ style — Google base + Allman braces, naming, Doxygen placement |
 
-To use one: copy the skill directory into a project's `.claude/skills/`.
+To use one: copy the skill directory into `~/.claude/skills/` so it applies across
+every project you work on. Only put it in a project's own `.claude/skills/` when
+the team shares a single style and it needs to travel with the repo — a
+project-level skill overrides your personal one for that repo.
 
 ## `workflows/`
 
