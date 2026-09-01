@@ -30,7 +30,14 @@ one way of working on a repo. They're generic until you run the workflow's
 See [`workflows/README.md`](workflows/README.md) for the list of workflows, what
 each is for, and how to adopt one.
 
-## This repo's own `.claude/settings.json`
+## This repo runs `str8-2-main` on itself
 
-Denies `git commit` / `git push` here — nothing in this repo should be committed or
-pushed by Claude without the user doing it directly.
+`.claude/` here is a filled-in copy of [`workflows/str8-2-main/`](workflows/str8-2-main/) —
+this toolkit dogfoods its own relaxed workflow. Non-trivial work goes through
+plan mode with a task breakdown; `/check` validates every JSON file and lints the
+Markdown with [PyMarkdown](https://github.com/jackdewinter/pymarkdown) before
+anything ships; `/ship` makes a header-only commit and pushes straight to `main`.
+See [`.claude/WORKFLOW.md`](.claude/WORKFLOW.md). One-time: `pipx install pymarkdownlnt`.
+
+Behavior changes to the workflow belong in `workflows/str8-2-main/` first, then
+get re-merged into `.claude/` if they matter here.
