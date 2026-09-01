@@ -53,7 +53,7 @@ set, and draft a body matching those fields exactly. Type comes from the templat
 
 Generic body structure:
 
-```
+```markdown
 ## Summary
 <what the change is>
 

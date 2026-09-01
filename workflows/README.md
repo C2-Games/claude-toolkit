@@ -10,9 +10,11 @@ are generic: nothing is wired to a specific project until you run the workflow's
 1. Copy the workflow directory into your project and rename it to `.claude/`
    (swap `issue-gated` for `todo-gated` or `str8-2-main` to adopt one of those
    instead):
+
    ```bash
    cp -r /path/to/claude-toolkit/workflows/issue-gated your-project/.claude
    ```
+
    If the project already has a `.claude/`, copy the pieces in by hand, or drop the
    workflow in a scratch dir and merge — don't clobber existing config.
 2. Open Claude Code in the project and say: **"read `.claude/INIT.md` and follow it"**.
@@ -49,12 +51,14 @@ flowchart TD
 ```
 
 **Use it when:**
+
 - Solo or small-team work on a GitHub repo where you want every change linked to an
   issue and a clean issue → branch → PR trail.
 - You want plan-mode discipline and a forced local check + review gate before PR.
 - You want to keep `commit`/`push` a deliberate human step.
 
 **Don't bother when:**
+
 - Throwaway scripts, spikes, or repos without GitHub issues.
 - A team that already has heavier CI/CD process this would duplicate or fight.
 - You want Claude to commit and push autonomously.
@@ -86,6 +90,7 @@ flowchart TD
 ```
 
 **Use it when:**
+
 - Local or solo work on a repo with no GitHub issues, or where you don't want an
   issue filed per change.
 - You want the work backlog to live in the repo and travel with it.
@@ -93,6 +98,7 @@ flowchart TD
   dependency.
 
 **Don't bother when:**
+
 - You already track work as GitHub issues — use `issue-gated`.
 - Throwaway scripts and spikes.
 - You want Claude to commit and push autonomously.
@@ -125,12 +131,14 @@ flowchart TD
 ```
 
 **Use it when:**
+
 - Solo work you push straight to `main`, with no issue or backlog bookkeeping and
   no work branch.
 - You still want plan-mode discipline and a forced check gate before code lands.
 - You are fine with Claude committing and pushing to `main` once `/check` is clean.
 
 **Don't bother when:**
+
 - You want a change traced to an issue or a tracked backlog — use `issue-gated` or
   `todo-gated`.
 - A shared repo where landing straight on `main` without review would step on

@@ -33,7 +33,7 @@ refuses to run if `/check` is not current.
 
 4. **Draft the commit message.** Header only:
 
-   ```
+   ```text
    type: Sentence-case description
    ```
 

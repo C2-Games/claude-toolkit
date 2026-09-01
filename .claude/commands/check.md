@@ -32,8 +32,7 @@ Needs PyMarkdown once: `pipx install pymarkdownlnt` (or
 PEP-668 system). The `--config` flag is required -- PyMarkdown does not
 auto-load `.pymarkdown.json`. That file (repo root) already disables the
 stylistic rules the pre-existing docs don't follow (`md007`, `md013`,
-`md029`, `md031`, `md032`, `md033`, `md040`, `md041`) and enables the
-front-matter extension. Disable a further rule there only when it is purely
+`md029`, `md041`) and enables the front-matter extension. Disable a further rule there only when it is purely
 stylistic and fires on already-committed docs; fix genuine findings (broken
 link fragments, malformed tables, stray tabs) in the file. Tighten the config
 back up as docs get rewritten.

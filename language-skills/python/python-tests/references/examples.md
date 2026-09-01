@@ -156,7 +156,7 @@ broken shape, extract each into a named resource and collapse the
 tests into one parametrized test — the same "3+ variants" logic as
 `pytest.mark.parametrize`, just with the inputs as files:
 
-```
+```text
 tests/resources/pricing/
     negative_rate.toml
     duplicate_tier_name.toml

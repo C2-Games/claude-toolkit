@@ -62,7 +62,7 @@ outside the diff.
 
 Plain structured text, one line per finding:
 
-```
+```text
 path:line: SEVERITY: <problem>. <fix>.
 ```
 

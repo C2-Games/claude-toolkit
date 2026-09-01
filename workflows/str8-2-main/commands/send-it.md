@@ -35,7 +35,7 @@ for approval.
 Write each task with this structure so parallel-dispatch eligibility is obvious at
 a glance:
 
-```
+```text
 ### Task <N>: <short title>
 **Subagent:** implementer
 **Depends on:** Task <M> | independent

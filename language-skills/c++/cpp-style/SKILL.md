@@ -25,6 +25,7 @@ against a project: it uses the project's own `.clang-format` if one
 exists, otherwise copies in this skill's `assets/.clang-format`.
 
 **Example:**
+
 ```cpp
 // bad: attached brace.
 if (isAlive()) {
@@ -61,6 +62,7 @@ prose. `auto tiers = catalog_.find(name);` says what `tiers->second` will
 be; `auto it = catalog_.find(name);` says nothing at all.
 
 **Example:**
+
 ```cpp
 // bad: PascalCase method, k-prefixed constant, no trailing underscore.
 class enemy_unit
@@ -114,6 +116,7 @@ constructor. This is a self-check to run per comment, not just a
 reference to consult if something looks off.
 
 **Example:**
+
 ```cpp
 // bad: restates what the code already says, wrong casing/period.
 // Increment health by heal amount
@@ -149,6 +152,7 @@ as-is — this applies regardless of whether the original file predates
 this rule.
 
 Shape:
+
 - `@brief <description>` line first.
 - `@param <name> <description>` — one per parameter, in signature order.
   Omit entirely if the method/constructor takes no parameters.

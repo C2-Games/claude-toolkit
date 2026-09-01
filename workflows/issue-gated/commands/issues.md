@@ -14,6 +14,7 @@ gh issue list --state open --limit 40 --json number,title,labels,assignees \
 `GH_REPO` is set in `.claude/settings.json`, so `gh` resolves the repo without `-R`.
 
 Pass `$ARGUMENTS` through as appropriate:
+
 - bare words → `--search "<words>"`
 - `label:x` → `--label x`
 - `assignee:@me` → `--assignee @me`

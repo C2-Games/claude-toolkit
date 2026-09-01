@@ -41,7 +41,7 @@ in `.claude/settings.json` — publishing is the user's call, always.
 6. **Write the body** to `.claude/.pr-body.md` (gitignored). If the repo has
    `.github/PULL_REQUEST_TEMPLATE.md`, follow it exactly. Otherwise use:
 
-   ```
+   ```markdown
    ## Summary
    <one or two plain sentences on what changed>
 
@@ -60,7 +60,7 @@ in `.claude/settings.json` — publishing is the user's call, always.
 
 7. **Print the handoff** and stop:
 
-   ```
+   ```text
    ! git add <the files from step 4>
    ! git commit -m "<type>: <Sentence-case description>"
    ! git push -u origin <branch>

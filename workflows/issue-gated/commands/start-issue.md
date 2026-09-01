@@ -62,6 +62,7 @@ outright (`.claude/**` is exempt). Run this first, every time.
 
 3.5. **Decide whether to isolate this in a worktree.** Ask the user explicitly — do
    not decide silently — when either signal fires:
+
    - the request itself said "parallel", "worktree", or "isolated", or
    - `.claude/.current-issue` already exists and records a *different* branch than
      the one just derived (another issue is already active in this checkout).
@@ -130,7 +131,7 @@ outright (`.claude/**` is exempt). Run this first, every time.
    **Break the plan into isolated tasks**, each written with this structure so
    parallel-dispatch eligibility is obvious at a glance:
 
-   ```
+   ```text
    ### Task <N>: <short title> — issue #<issue-number>
    **Subagent:** implementer
    **Depends on:** Task <M> | independent
