@@ -1,0 +1,6 @@
+{
+  "find_expr": "find src -type f \\( -name '*.py' \\) -print0",
+  "format_cmd": "",
+  "lint_cmd": "",
+  "test_cmd": ""
+}

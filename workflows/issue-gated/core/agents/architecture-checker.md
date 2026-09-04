@@ -1,0 +1,1 @@
+../../../_shared/agents/architecture-checker.md

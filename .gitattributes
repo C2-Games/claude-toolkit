@@ -1,0 +1,5 @@
+# This repo is LF-only. Scripts here run on Linux/macOS and bin/wf is executed
+# by its shebang -- a CRLF would break it. Overrides a global core.autocrlf=true.
+* text=auto eol=lf
+*.png binary
+*.jpg binary

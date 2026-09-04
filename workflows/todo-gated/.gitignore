@@ -1,9 +1,0 @@
-# Runtime state written by this workflow's commands and hooks -- never committed.
-# todos.json is intentionally NOT here: it is the tracked backlog.
-.current-todo
-.last-check
-.pr-body.md
-.doc-drift-ack
-worktrees/
-hooks/__pycache__/
-scripts/__pycache__/

@@ -1,0 +1,6 @@
+{
+  "find_expr": "git ls-files -z --cached --others --exclude-standard '*.md'",
+  "format_cmd": "",
+  "lint_cmd": "git ls-files -z --cached --others --exclude-standard '*.json' | xargs -0 -I{} sh -c 'python3 -m json.tool \"{}\" > /dev/null || { echo \"invalid JSON: {}\"; exit 1; }' && python3 -m pymarkdown --config .pymarkdown.json scan -r .",
+  "test_cmd": "git ls-files '*.py' | xargs python3 -m py_compile"
+}

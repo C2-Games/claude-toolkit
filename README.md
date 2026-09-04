@@ -1,8 +1,9 @@
 # claude-toolkit
 
-A personal library of Claude Code building blocks. Nothing here runs on its own —
-each piece is copied into another project's `.claude/` to change how Claude behaves
-*there*.
+A personal library of Claude Code building blocks, and the central store the
+`bin/wf` CLI links them into other repos from. Nothing here runs on its own —
+each piece is adopted into another project's `.claude/` to change how Claude
+behaves *there*.
 
 ## `language-skills/`
 
@@ -23,21 +24,27 @@ project-level skill overrides your personal one for that repo.
 
 ## `workflows/`
 
-Complete `.claude/` setups — hooks, commands, agents, and docs that together impose
-one way of working on a repo. They're generic until you run the workflow's
-`INIT.md`, which tailors them to the project and then deletes itself.
+Each workflow has a `core/` (hooks, commands, agents, docs — the invariant part)
+and a `local/` (templates the adopting repo fills in). `wf adopt <name>` symlinks
+`core/` into a repo's `.claude/` and copies `local/` in; pulling this toolkit
+upgrades every adopter's `core/` at once. `workflows/_shared/` holds files shared
+between workflows.
 
 See [`workflows/README.md`](workflows/README.md) for the list of workflows, what
-each is for, and how to adopt one.
+each is for, how to adopt one, and how `wf sync` / `MIGRATIONS.md` keep adopters
+current.
 
 ## This repo runs `str8-2-main` on itself
 
-`.claude/` here is a filled-in copy of [`workflows/str8-2-main/`](workflows/str8-2-main/) —
-this toolkit dogfoods its own relaxed workflow. Non-trivial work goes through
-plan mode with a task breakdown; `/check` validates every JSON file and lints the
-Markdown with [PyMarkdown](https://github.com/jackdewinter/pymarkdown) before
-anything ships; `/ship` makes a header-only commit and pushes straight to `main`.
-See [`.claude/WORKFLOW.md`](.claude/WORKFLOW.md). One-time: `pipx install pymarkdownlnt`.
+`.claude/` here is an adopter of [`workflows/str8-2-main/`](workflows/str8-2-main/):
+`commands/` / `agents/` / `hooks/` / `WORKFLOW.md` / `settings.json` are relative
+symlinks into `workflows/str8-2-main/core/`, and `.claude/project.json` +
+`.claude/settings.local.json` hold this repo's specifics. Non-trivial work goes
+through plan mode with a task breakdown; `/check` validates every JSON file and
+lints the Markdown with [PyMarkdown](https://github.com/jackdewinter/pymarkdown)
+before anything ships; `/ship` makes a header-only commit and pushes straight to
+`main`. See [`.claude/WORKFLOW.md`](.claude/WORKFLOW.md). One-time on a fresh
+machine: `pipx install pymarkdownlnt`, then `wf link`.
 
-Behavior changes to the workflow belong in `workflows/str8-2-main/` first, then
-get re-merged into `.claude/` if they matter here.
+Behavior changes to the workflow are made in `workflows/str8-2-main/core/`
+directly — they take effect here immediately (same clone).

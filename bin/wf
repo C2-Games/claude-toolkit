@@ -1,0 +1,325 @@
+#!/usr/bin/env python3
+"""wf -- adopt and sync claude-toolkit workflows across repos.
+
+A workflow's invariant `core/` lives once in this toolkit (the "store"). A repo
+adopts it by symlinking the `core/` subtrees into its `.claude/` and copying the
+`local/` templates in as real, committed files. Upgrades to `core/` reach every
+adopter the moment the store is pulled -- the symlinks need nothing done to
+them. Changes that still need per-repo follow-up are listed in each workflow's
+`MIGRATIONS.md`; `wf status` / `wf sync` surface the ones a repo has not yet
+acknowledged.
+
+Subcommands:
+  wf adopt <workflow> [dir]   set up .claude/ in dir (default: cwd)
+  wf link [dir]               (re)create the symlinks from .claude/.workflow
+  wf status [dir ...]         show which repos are behind their workflow's VERSION
+  wf sync [--accept] [dir ...]  git pull the store, then status; --accept records
+                               the current VERSION for each named repo
+  wf projects                list registered repos and their state
+
+Stdlib only.
+"""
+
+import json
+import os
+import re
+import subprocess
+import sys
+
+STORE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+REGISTRY = os.path.join(STORE, ".projects")
+# .claude/ entries that are symlinks into <store>/workflows/<wf>/core/.
+# name -> ("file" | "dir", core-relative target). "scripts" is optional.
+LINKS = [
+    ("settings.json", "file", "settings.core.json"),
+    ("commands", "dir", "commands"),
+    ("agents", "dir", "agents"),
+    ("hooks", "dir", "hooks"),
+    ("scripts", "dir", "scripts"),
+    ("WORKFLOW.md", "file", "WORKFLOW.md"),
+]
+
+
+def die(msg):
+    sys.stderr.write("wf: {}\n".format(msg))
+    raise SystemExit(1)
+
+
+def workflow_dir(name):
+    path = os.path.join(STORE, "workflows", name)
+    if not os.path.isdir(os.path.join(path, "core")):
+        die("unknown workflow {!r} (no {}/core)".format(name, path))
+    return path
+
+
+def store_version(name):
+    try:
+        with open(os.path.join(STORE, "workflows", name, "VERSION")) as handle:
+            return int(handle.read().strip())
+    except (OSError, ValueError):
+        return 0
+
+
+def claude_dir(project):
+    return os.path.join(os.path.abspath(project), ".claude")
+
+
+def read_workflow_file(project):
+    try:
+        with open(os.path.join(claude_dir(project), ".workflow")) as handle:
+            data = json.load(handle)
+        if not isinstance(data, dict) or "workflow" not in data:
+            raise ValueError
+        data.setdefault("core_version", 0)
+        return data
+    except (OSError, ValueError):
+        return None
+
+
+def write_workflow_file(project, data):
+    with open(os.path.join(claude_dir(project), ".workflow"), "w") as handle:
+        json.dump(data, handle, indent=2)
+        handle.write("\n")
+
+
+# ---- registry -------------------------------------------------------------
+
+def registry_read():
+    try:
+        with open(REGISTRY) as handle:
+            return [ln.strip() for ln in handle if ln.strip()]
+    except OSError:
+        return []
+
+
+def registry_add(project):
+    project = os.path.abspath(project)
+    entries = registry_read()
+    if project not in entries:
+        entries.append(project)
+        with open(REGISTRY, "w") as handle:
+            handle.write("\n".join(entries) + "\n")
+
+
+# ---- symlinks -----------------------------------------------------------
+
+def link_targets(project, name):
+    """(link path in .claude/, target path to point at) for one LINKS entry."""
+    wf = read_workflow_file(project) or die(
+        "{}: no .claude/.workflow -- run `wf adopt` first".format(project)
+    )
+    core = os.path.join(STORE, "workflows", wf["workflow"], "core")
+    entry = next(e for e in LINKS if e[0] == name)
+    target = os.path.join(core, entry[2])
+    link = os.path.join(claude_dir(project), name)
+    # Relative link when the project sits inside the store (self-dogfooding),
+    # absolute otherwise.
+    if os.path.abspath(project).startswith(STORE + os.sep) or os.path.abspath(project) == STORE:
+        target = os.path.relpath(target, claude_dir(project))
+    return link, target
+
+
+def make_links(project):
+    wf = read_workflow_file(project)
+    core = os.path.join(STORE, "workflows", wf["workflow"], "core")
+    made = []
+    for name, _kind, rel in LINKS:
+        if not os.path.exists(os.path.join(core, rel)):
+            continue  # optional (e.g. scripts/ only exists for todo-gated)
+        link, target = link_targets(project, name)
+        if os.path.islink(link) or os.path.exists(link):
+            if os.path.islink(link):
+                os.unlink(link)
+            else:
+                die("{} exists and is not a symlink -- move it aside".format(link))
+        os.symlink(target, link)
+        made.append(name)
+    return made
+
+
+# ---- migrations ---------------------------------------------------------
+
+BLOCK_RE = re.compile(r"^##\s+.*?v(\d+)\s*->\s*v(\d+)", re.IGNORECASE)
+
+
+def pending_migrations(name, from_version):
+    """Text of every MIGRATIONS.md block whose target version exceeds from_version."""
+    path = os.path.join(STORE, "workflows", name, "MIGRATIONS.md")
+    try:
+        with open(path) as handle:
+            lines = handle.read().splitlines()
+    except OSError:
+        return []
+    blocks, current, keep = [], [], False
+    for line in lines:
+        match = BLOCK_RE.match(line)
+        if match:
+            if current and keep:
+                blocks.append("\n".join(current).strip())
+            to_version = int(match.group(2))
+            keep = to_version > from_version
+            current = [line]
+        elif current:
+            current.append(line)
+    if current and keep:
+        blocks.append("\n".join(current).strip())
+    return blocks
+
+
+# ---- commands ---------------------------------------------------------
+
+def cmd_adopt(args):
+    if not args:
+        die("usage: wf adopt <workflow> [dir]")
+    name = args[0]
+    project = os.path.abspath(args[1] if len(args) > 1 else ".")
+    wfdir = workflow_dir(name)
+    cdir = claude_dir(project)
+
+    if os.path.isdir(cdir) and os.listdir(cdir):
+        die("{} already exists and is not empty -- merge by hand".format(cdir))
+    os.makedirs(cdir, exist_ok=True)
+
+    write_workflow_file(project, {
+        "workflow": name,
+        "core_version": store_version(name),
+        "store": STORE,
+    })
+    made = make_links(project)
+
+    # Copy local/ templates in as real files (never clobber).
+    localdir = os.path.join(wfdir, "local")
+    copied = []
+    for root, _dirs, files in os.walk(localdir):
+        for fname in files:
+            src = os.path.join(root, fname)
+            rel = os.path.relpath(src, localdir)
+            dst = os.path.join(cdir, rel)
+            if os.path.exists(dst):
+                continue
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            with open(src, "rb") as fh:
+                blob = fh.read()
+            with open(dst, "wb") as fh:
+                fh.write(blob)
+            copied.append(rel)
+
+    registry_add(project)
+    print("adopted {} in {}".format(name, project))
+    print("  symlinked: {}".format(", ".join(made)))
+    print("  copied local files: {}".format(", ".join(sorted(copied))))
+    print()
+    print("Next: open Claude Code in {} and say:".format(project))
+    print('  read .claude/INIT.md and follow it')
+
+
+def cmd_link(args):
+    project = os.path.abspath(args[0] if args else ".")
+    if not read_workflow_file(project):
+        die("{}: no .claude/.workflow".format(project))
+    made = make_links(project)
+    registry_add(project)
+    # Report any dangling result.
+    bad = [n for n, _k, _r in LINKS
+           if os.path.islink(os.path.join(claude_dir(project), n))
+           and not os.path.exists(os.path.join(claude_dir(project), n))]
+    print("linked {} in {}".format(", ".join(made), project))
+    if bad:
+        die("dangling after link: {} -- is the store at {}?".format(", ".join(bad), STORE))
+
+
+def _status_one(project):
+    wf = read_workflow_file(project)
+    if not wf:
+        print("  {}  -- not adopted (no .claude/.workflow)".format(project))
+        return
+    sv = store_version(wf["workflow"])
+    pv = wf["core_version"]
+    dangling = [
+        n for n, _k, _r in LINKS
+        if os.path.islink(os.path.join(claude_dir(project), n))
+        and not os.path.exists(os.path.join(claude_dir(project), n))
+    ]
+    flag = "current" if pv >= sv else "BEHIND v{}->v{}".format(pv, sv)
+    if dangling:
+        flag += "  [dangling: {} -- run `wf link`]".format(", ".join(dangling))
+    print("  {}  [{}]  {}".format(project, wf["workflow"], flag))
+    if pv < sv:
+        for block in pending_migrations(wf["workflow"], pv):
+            print()
+            for line in block.splitlines():
+                print("    " + line)
+        print()
+
+
+def cmd_status(args):
+    projects = [os.path.abspath(a) for a in args] or registry_read()
+    if not projects:
+        print("no registered projects (run `wf adopt` somewhere)")
+        return
+    for project in projects:
+        _status_one(project)
+
+
+def cmd_sync(args):
+    accept = "--accept" in args
+    named = [os.path.abspath(a) for a in args if not a.startswith("-")]
+    result = subprocess.run(
+        ["git", "-C", STORE, "pull", "--ff-only"],
+        capture_output=True, text=True,
+    )
+    sys.stdout.write(result.stdout)
+    if result.returncode != 0:
+        sys.stderr.write(result.stderr)
+        die("store pull failed -- resolve it in {} and retry".format(STORE))
+
+    projects = named or registry_read()
+    for project in projects:
+        _status_one(project)
+        if accept and project in named:
+            wf = read_workflow_file(project)
+            if wf:
+                wf["core_version"] = store_version(wf["workflow"])
+                write_workflow_file(project, wf)
+                print("  -> recorded core_version {} for {}".format(
+                    wf["core_version"], project))
+
+
+def cmd_projects(_args):
+    entries = registry_read()
+    if not entries:
+        print("no registered projects")
+        return
+    for project in entries:
+        wf = read_workflow_file(project)
+        if not wf:
+            print("  {}  -- MISSING .workflow".format(project))
+            continue
+        sv = store_version(wf["workflow"])
+        pv = wf["core_version"]
+        mark = "current" if pv >= sv else "behind (v{} < v{})".format(pv, sv)
+        print("  {}  [{}]  {}".format(project, wf["workflow"], mark))
+
+
+COMMANDS = {
+    "adopt": cmd_adopt,
+    "link": cmd_link,
+    "status": cmd_status,
+    "sync": cmd_sync,
+    "projects": cmd_projects,
+}
+
+
+def main(argv):
+    if not argv or argv[0] in ("-h", "--help", "help"):
+        sys.stdout.write(__doc__)
+        return 0
+    cmd = argv[0]
+    if cmd not in COMMANDS:
+        die("unknown command {!r} (try `wf --help`)".format(cmd))
+    COMMANDS[cmd](argv[1:])
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

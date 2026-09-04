@@ -1,0 +1,15 @@
+# Symlinks into the central store -- recreated by `wf link`, never committed.
+/settings.json
+/commands
+/agents
+/hooks
+/WORKFLOW.md
+
+# Runtime state written by this workflow's commands and hooks -- never committed.
+.current-issue
+.last-check
+.pr-body.md
+.doc-drift-ack
+scheduled_tasks.lock
+worktrees/
+hooks/__pycache__/

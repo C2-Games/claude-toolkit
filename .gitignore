@@ -2,5 +2,8 @@
 __pycache__/
 .claude/.last-check
 
+# Local registry written by `bin/wf` -- machine-specific list of adopted repos.
+.projects
+
 # ~/.gitignore_global ignores *CLAUDE.md; this repo tracks its own.
 !.claude/CLAUDE.md

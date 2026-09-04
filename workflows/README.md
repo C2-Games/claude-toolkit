@@ -1,32 +1,66 @@
 # Workflows
 
-Each subdirectory here is a complete, self-contained `.claude/` folder — hooks,
-commands, agents, and docs that together impose one way of working on a repo. They
-are generic: nothing is wired to a specific project until you run the workflow's
-`INIT.md`.
+Each subdirectory here has a **`core/`** (hooks, commands, agents, docs -- the
+invariant part, identical for every repo running the workflow) and a **`local/`**
+(templates a repo fills in and owns). A repo adopts a workflow by symlinking
+`core/` into its `.claude/` and copying `local/` in; upgrades to `core/`
+propagate to every adopter through the symlink. `workflows/_shared/` holds files
+shared *between* workflows, symlinked into each `core/`.
 
 ## Incorporating a workflow into a project
 
-1. Copy the workflow directory into your project and rename it to `.claude/`
-   (swap `issue-gated` for `todo-gated` or `str8-2-main` to adopt one of those
-   instead):
+1. Make `bin/wf` reachable (once per machine):
 
    ```bash
-   cp -r /path/to/claude-toolkit/workflows/issue-gated your-project/.claude
+   ln -s /path/to/claude-toolkit/bin/wf ~/.local/bin/wf   # or anywhere on PATH
    ```
 
-   If the project already has a `.claude/`, copy the pieces in by hand, or drop the
-   workflow in a scratch dir and merge — don't clobber existing config.
-2. Open Claude Code in the project and say: **"read `.claude/INIT.md` and follow it"**.
-3. Answer its questions. It inspects the repo, fills in the project specifics
-   (default branch, format/lint/test commands, source paths, architecture rules, and
-   — for `issue-gated` — the repo slug), then deletes `INIT.md`.
-4. Read `.claude/WORKFLOW.md` for how it operates, and start with the workflow's
-   entry command — `issue-gated`: `/issues` or `/new-issue`; `todo-gated`: `/todos`
-   or `/create-todo`; `str8-2-main`: `/send-it`, or just make a request.
+2. Adopt the workflow (swap in `todo-gated` / `str8-2-main` as needed):
 
-Same steps for a brand-new project or an existing one — the only difference is
-whether step 1 is a plain copy or a merge.
+   ```bash
+   cd your-project
+   wf adopt issue-gated
+   ```
+
+   This creates `.claude/`, symlinks `core/` in, copies the `local/` templates,
+   writes `.claude/.workflow`, and registers the repo. It refuses if `.claude/`
+   already exists and is non-empty -- merge by hand in that case.
+
+3. Open Claude Code in the project and say: **"read `.claude/INIT.md` and follow it"**.
+
+4. Answer its questions. It fills `.claude/project.json` (source glob,
+   format/lint/test commands, workflow knobs) and `.claude/settings.local.json`
+   (the repo's lint/test allows, and -- for `issue-gated` -- `GH_REPO`), fills
+   `ARCHITECTURE.md` if you gave rules, then deletes `INIT.md`. It never touches
+   `core/` -- the default branch is derived at runtime, not configured.
+
+5. Commit the real files (`.claude/project.json`, `.claude/settings.local.json`,
+   `.claude/.workflow`, `.claude/CLAUDE.md`, and `ARCHITECTURE.md` /
+   `todos.json` where present). The symlinks are gitignored.
+
+6. Read `.claude/WORKFLOW.md`, and start with the entry command --
+   `issue-gated`: `/issues` or `/new-issue`; `todo-gated`: `/todos` or
+   `/create-todo`; `str8-2-main`: `/send-it`, or just make a request.
+
+On a fresh clone of an already-adopted repo, run `wf link` to recreate the
+symlinks from `.claude/.workflow`.
+
+## Keeping adopted repos in sync
+
+The symlinked `core/` is always live -- pull this toolkit and every adopter has
+the new `core/`. What needs tracking is changes that require a repo to *do*
+something (a new `project.json` key, a `settings.local.json` entry, a re-`wf
+link`). Those go in each workflow's `MIGRATIONS.md` as a dated
+`v<N> -> v<N+1>` block, and the workflow's `VERSION` is bumped.
+
+```bash
+wf sync                 # git-pull the store, then show every repo that is behind
+wf status <repo>        # just the pending MIGRATIONS.md blocks for one repo
+wf sync --accept <repo> # after working through them, record the new version
+```
+
+A pure-prose `core/` edit adds no `MIGRATIONS.md` block and needs no `wf sync`
+follow-up.
 
 ---
 
