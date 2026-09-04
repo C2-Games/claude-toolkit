@@ -1,10 +1,11 @@
 # INIT -- tailor this workflow to the current repo
 
 `wf adopt str8-2-main` has already run here: `.claude/` exists, the `core/`
-subtrees are symlinked into the central store, and the `local/` templates
-(`project.json`, `settings.local.json`, `CLAUDE.md`) are copied in. Nothing in
-`core/` is ever edited per-project -- your job is to fill the two local files,
-then **delete this file**.
+files (`commands/`, `agents/`, `hooks/`, `WORKFLOW.md`, `settings.json`) and
+the `local/` templates (`project.json`, `settings.local.json`, `CLAUDE.md`)
+are all copied in as real files. Nothing in `core/` is ever edited
+per-project -- your job is to fill the two local files, then **delete this
+file**.
 
 Do not skip the confirmation step -- the check commands and the source glob break
 the workflow silently if wrong.
@@ -56,11 +57,11 @@ Two files only:
   string means "skip that step".
 - **`.claude/settings.local.json`** -- add the format / lint / test executables
   to `permissions.allow` (e.g. `"Bash(pytest*)"`, `"Bash(ruff*)"`). The core
-  `git` allows live in the symlinked `settings.json`; do not duplicate them.
+  `git` allows live in `.claude/settings.json`; do not duplicate them.
 
 Do **not** edit anything under `.claude/commands/`, `.claude/agents/`,
-`.claude/hooks/`, or `.claude/WORKFLOW.md` -- they are symlinks into the shared
-store.
+`.claude/hooks/`, or `.claude/WORKFLOW.md` -- they're the workflow's core
+files, kept current by `wf sync`, not hand-edited per project.
 
 ## 4. CLAUDE.md
 
@@ -73,9 +74,9 @@ but the `implementer` agent and plan mode both get more useful with a real one -
 
 - Confirm `python3` (or `python`) is on `PATH` -- the one hook and the
   `project.json` reads in `/check` need it.
-- `git status` should show `.claude/settings.local.json`, `.claude/project.json`,
-  `.claude/CLAUDE.md`, and `.claude/.workflow` as the only new tracked files --
-  the symlinks are gitignored.
+- `git add .claude` and commit -- everything under `.claude/` is a real file
+  now (core files included), nothing is gitignored except runtime state and
+  `*.core-new` conflict scratch.
 
 ## 6. Finish
 

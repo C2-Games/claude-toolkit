@@ -1,12 +1,13 @@
 # todo-gated migrations
 
-Append-only. One block per core change that an **already-adopted** repo must act
-on -- a new `project.json` key, a new `settings.local.json` allow entry, a
-hook-wiring change that needs `wf link` re-run. A change confined to `core/`
-prose adds no block here.
+Append-only. One block per core change that an **already-adopted** repo must
+act on beyond what `wf sync` copies in automatically -- a new `project.json`
+key, a new `settings.local.json` allow entry. A change confined to `core/`
+prose, or one `wf sync` delivers as a plain file copy, adds no block here.
 
 `wf status` prints every block newer than a repo's recorded `core_version`;
-`wf sync` walks them with you and bumps the recorded version once you confirm.
+`wf sync --accept <repo>` records the new version once you've worked through
+them.
 
 <!-- Template for a new block:
 

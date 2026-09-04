@@ -25,5 +25,5 @@ one place reaches every workflow:
 - If a genuine divergence is unavoidable, replace that workflow's symlink with a
   real file and note why in the workflow's `core/` -- do not fork `_shared/`.
 - `_hooklib.py` and any hook here resolves repo state through
-  `$CLAUDE_PROJECT_DIR`, never `__file__` (these run through a symlinked
-  `.claude/hooks/`).
+  `$CLAUDE_PROJECT_DIR`, never `__file__` -- an adopter's `.claude/hooks/` is
+  its own copy, not this store, so `__file__` would resolve to the wrong repo.

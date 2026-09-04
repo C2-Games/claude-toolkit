@@ -79,10 +79,11 @@ branch's changed files against a watch list (`.claude/settings.local.json`,
 `.claude/project.json`, `.claude/scripts/`, `.claude/ARCHITECTURE.md`, plus any
 paths in `project.json`'s `doc_drift_watch`) and, when any of those changed but
 `.claude/CLAUDE.md` did not, blocks the stop with the list. The
-`.claude/commands/`, `.claude/agents/`, `.claude/hooks/` trees are symlinks into
-the shared store, so their edits are tracked in the store, not here. It fires
-once per distinct set of changes, recorded in `.claude/.doc-drift-ack`
-(gitignored). If the repo has no `.claude/CLAUDE.md`, the hook does nothing.
+`.claude/commands/`, `.claude/agents/`, `.claude/hooks/` trees are core files
+delivered by `wf sync`, not hand-edited per project, so they're excluded from
+the watch list. It fires once per distinct set of changes, recorded in
+`.claude/.doc-drift-ack` (gitignored). If the repo has no `.claude/CLAUDE.md`,
+the hook does nothing.
 
 ---
 

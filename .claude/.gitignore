@@ -1,9 +1,6 @@
-# Symlinks into workflows/str8-2-main/core/ -- recreated by `wf link`, not committed.
-/settings.json
-/commands
-/agents
-/hooks
-/WORKFLOW.md
+# Conflict scratch left by `wf sync` when a core file diverged from the
+# store on both sides -- merge into the real file by hand, then delete this.
+*.core-new
 
 # Runtime state written by this workflow -- never committed.
 .last-check

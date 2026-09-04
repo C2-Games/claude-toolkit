@@ -1,10 +1,6 @@
-# Symlinks into the central store -- recreated by `wf link`, never committed.
-/settings.json
-/commands
-/agents
-/hooks
-/scripts
-/WORKFLOW.md
+# Conflict scratch left by `wf sync` when a core file diverged from the
+# store on both sides -- merge into the real file by hand, then delete this.
+*.core-new
 
 # Runtime state written by this workflow's commands and hooks -- never committed.
 # todos.json is intentionally NOT here: it is the tracked backlog.

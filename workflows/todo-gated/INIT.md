@@ -1,12 +1,11 @@
 # INIT -- tailor this workflow to the current repo
 
 `wf adopt todo-gated` has already run here: `.claude/` exists, the `core/`
-subtrees (`commands/`, `agents/`, `hooks/`, `scripts/`, `WORKFLOW.md`,
-`settings.json`) are symlinked into the central store, and the `local/`
-templates (`project.json`, `settings.local.json`, `CLAUDE.md`,
-`ARCHITECTURE.md`, `todos.json`) are copied in. Nothing in `core/` is ever
-edited per-project -- your job is to fill the local files, then **delete this
-file**.
+files (`commands/`, `agents/`, `hooks/`, `scripts/`, `WORKFLOW.md`,
+`settings.json`) and the `local/` templates (`project.json`,
+`settings.local.json`, `CLAUDE.md`, `ARCHITECTURE.md`, `todos.json`) are all
+copied in as real files. Nothing in `core/` is ever edited per-project --
+your job is to fill the local files, then **delete this file**.
 
 Do not skip the confirmation step -- the check commands break the workflow
 silently if wrong.
@@ -52,13 +51,14 @@ one for the PR step.
 | File | What to set |
 |---|---|
 | `.claude/project.json` | `find_expr`, `format_cmd`, `lint_cmd`, `test_cmd` (blank = skip), `doc_drift_watch` (list) |
-| `.claude/settings.local.json` | add the format / lint / test executables to `permissions.allow` (e.g. `"Bash(pytest*)"`). The `git` / `todos.py` allows and the commit/push denies live in the symlinked `settings.json` -- do not duplicate them. |
+| `.claude/settings.local.json` | add the format / lint / test executables to `permissions.allow` (e.g. `"Bash(pytest*)"`). The `git` / `todos.py` allows and the commit/push denies live in `.claude/settings.json` -- do not duplicate them. |
 | `.claude/ARCHITECTURE.md` | If the user gave rules: replace the `## Rules` examples, update the intro and diagram, and **delete the `<!-- ARCHITECTURE-TEMPLATE-UNFILLED -->` marker line**. If not: leave it exactly as-is. |
 | `.claude/todos.json` | Leave as `{"next_id": 1, "todos": []}` unless seeding a backlog -- and if so, do it via `python3 .claude/scripts/todos.py add`, never by hand. It is a tracked file. |
 
 Do **not** edit anything under `.claude/commands/`, `.claude/agents/`,
-`.claude/hooks/`, `.claude/scripts/`, or `.claude/WORKFLOW.md` -- they are
-symlinks into the store.
+`.claude/hooks/`, `.claude/scripts/`, or `.claude/WORKFLOW.md` -- they're the
+workflow's core files, kept current by `wf sync`, not hand-edited per
+project.
 
 ## 4. CLAUDE.md
 
@@ -70,10 +70,9 @@ it from the codebase.
 
 - Confirm `python3` (or `python`) is on `PATH` -- the hooks, `todos.py`, and the
   `project.json` reads in `/check` all need it.
-- `git status` should show `.claude/project.json`,
-  `.claude/settings.local.json`, `.claude/ARCHITECTURE.md`, `.claude/todos.json`,
-  `.claude/CLAUDE.md`, and `.claude/.workflow` as the only new tracked files --
-  the symlinks are gitignored.
+- `git add .claude` and commit -- everything under `.claude/` is a real file
+  now (core files included), nothing is gitignored except runtime state and
+  `*.core-new` conflict scratch.
 
 ## 6. Finish
 

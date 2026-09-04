@@ -2,18 +2,16 @@
 
 Each subdirectory here has a **`core/`** (hooks, commands, agents, docs -- the
 invariant part, identical for every repo running the workflow) and a **`local/`**
-(templates a repo fills in and owns). A repo adopts a workflow by symlinking
-`core/` into its `.claude/` and copying `local/` in; upgrades to `core/`
-propagate to every adopter through the symlink. `workflows/_shared/` holds files
-shared *between* workflows, symlinked into each `core/`.
+(templates a repo fills in and owns). A repo adopts a workflow by copying
+`core/` and `local/` into its `.claude/` as real, committed files -- adopters
+are self-contained, not linked back to this store. `workflows/_shared/` holds
+files shared *between* workflows, symlinked into each `core/` (store-internal
+only; adopters always get real file content, never a symlink).
 
 ## Incorporating a workflow into a project
 
-1. Make `bin/wf` reachable (once per machine):
-
-   ```bash
-   ln -s /path/to/claude-toolkit/bin/wf ~/.local/bin/wf   # or anywhere on PATH
-   ```
+1. Make `bin/wf` reachable (once per machine) -- see the root
+   [`README.md`](../README.md) for where to put this repo and the PATH setup.
 
 2. Adopt the workflow (swap in `todo-gated` / `str8-2-main` as needed):
 
@@ -22,9 +20,10 @@ shared *between* workflows, symlinked into each `core/`.
    wf adopt issue-gated
    ```
 
-   This creates `.claude/`, symlinks `core/` in, copies the `local/` templates,
-   writes `.claude/.workflow`, and registers the repo. It refuses if `.claude/`
-   already exists and is non-empty -- merge by hand in that case.
+   This creates `.claude/`, copies `core/` and the `local/` templates in as
+   real files, writes `.claude/.workflow` (which also tracks a hash of every
+   core file, for `wf sync` later), and registers the repo. It refuses if
+   `.claude/` already exists and is non-empty -- merge by hand in that case.
 
 3. Open Claude Code in the project and say: **"read `.claude/INIT.md` and follow it"**.
 
@@ -34,33 +33,41 @@ shared *between* workflows, symlinked into each `core/`.
    `ARCHITECTURE.md` if you gave rules, then deletes `INIT.md`. It never touches
    `core/` -- the default branch is derived at runtime, not configured.
 
-5. Commit the real files (`.claude/project.json`, `.claude/settings.local.json`,
-   `.claude/.workflow`, `.claude/CLAUDE.md`, and `ARCHITECTURE.md` /
-   `todos.json` where present). The symlinks are gitignored.
+5. Commit everything, including `core/`'s real files (`.claude/commands/`,
+   `.claude/agents/`, `.claude/hooks/`, `.claude/WORKFLOW.md`,
+   `.claude/settings.json`, `.claude/.workflow`) and the `local/` ones
+   (`.claude/project.json`, `.claude/settings.local.json`, `.claude/CLAUDE.md`,
+   and `ARCHITECTURE.md` / `todos.json` where present). Nothing under
+   `.claude/` is gitignored anymore -- the repo now owns real copies.
 
 6. Read `.claude/WORKFLOW.md`, and start with the entry command --
    `issue-gated`: `/issues` or `/new-issue`; `todo-gated`: `/todos` or
    `/create-todo`; `str8-2-main`: `/send-it`, or just make a request.
 
-On a fresh clone of an already-adopted repo, run `wf link` to recreate the
-symlinks from `.claude/.workflow`.
-
 ## Keeping adopted repos in sync
 
-The symlinked `core/` is always live -- pull this toolkit and every adopter has
-the new `core/`. What needs tracking is changes that require a repo to *do*
-something (a new `project.json` key, a `settings.local.json` entry, a re-`wf
-link`). Those go in each workflow's `MIGRATIONS.md` as a dated
-`v<N> -> v<N+1>` block, and the workflow's `VERSION` is bumped.
+Pulling this toolkit does not by itself change an adopter -- `core/` is
+copied, not linked. Run `wf sync` to reconcile: for each core file it
+compares what the repo last synced, what the store has now, and what's on
+disk in the repo, then per file either copies in an untouched update, leaves
+a locally-edited file alone, or -- when both sides changed the same file --
+leaves the repo's file untouched and writes the store's version alongside it
+as `<file>.core-new` to merge by hand (delete it once merged; the next sync
+clears the conflict on its own).
+
+Changes that also need a repo to *do* something beyond a file copy (a new
+`project.json` key, a `settings.local.json` entry) go in each workflow's
+`MIGRATIONS.md` as a dated `v<N> -> v<N+1>` block, and the workflow's
+`VERSION` is bumped.
 
 ```bash
-wf sync                 # git-pull the store, then show every repo that is behind
-wf status <repo>        # just the pending MIGRATIONS.md blocks for one repo
-wf sync --accept <repo> # after working through them, record the new version
+wf sync                 # git-pull the store, reconcile every repo's core files
+wf status <repo>        # check one repo's sync state + pending MIGRATIONS.md, no pull
+wf sync --accept <repo> # after working through a MIGRATIONS.md block, record the new version
 ```
 
-A pure-prose `core/` edit adds no `MIGRATIONS.md` block and needs no `wf sync`
-follow-up.
+A pure-prose `core/` edit adds no `MIGRATIONS.md` block and needs no
+`--accept` -- `wf sync` alone picks up the file change.
 
 ---
 

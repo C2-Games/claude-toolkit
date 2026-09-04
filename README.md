@@ -1,9 +1,23 @@
 # claude-toolkit
 
-A personal library of Claude Code building blocks, and the central store the
-`bin/wf` CLI links them into other repos from. Nothing here runs on its own —
-each piece is adopted into another project's `.claude/` to change how Claude
-behaves *there*.
+A personal library of Claude Code building blocks — language-style skills and
+full `.claude/` workflows — plus the `bin/wf` CLI that delivers them into
+other repos. Nothing here runs on its own; each piece changes how Claude
+behaves in the repo that adopts it.
+
+## Where to put this repo
+
+Clone it to `~/.claude/claude-toolkit` — it sits next to the other personal
+Claude Code state under `~/.claude/`. `wf` doesn't actually care where the
+repo lives (it finds the store from its own path), but pick one place and
+stay there.
+
+Put `wf` on your PATH, once per machine:
+
+```bash
+ln -s ~/.claude/claude-toolkit/bin/wf ~/.local/bin/wf   # if ~/.local/bin is on PATH
+# otherwise: add `export PATH="$HOME/.claude/claude-toolkit/bin:$PATH"` to your shell rc
+```
 
 ## `language-skills/`
 
@@ -24,27 +38,48 @@ project-level skill overrides your personal one for that repo.
 
 ## `workflows/`
 
-Each workflow has a `core/` (hooks, commands, agents, docs — the invariant part)
-and a `local/` (templates the adopting repo fills in). `wf adopt <name>` symlinks
-`core/` into a repo's `.claude/` and copies `local/` in; pulling this toolkit
-upgrades every adopter's `core/` at once. `workflows/_shared/` holds files shared
-between workflows.
+A workflow is a complete `.claude/` setup — commands, agents, hooks — that
+imposes one way of working on a repo. Pick one in
+[`workflows/README.md`](workflows/README.md), then adopt it:
 
-See [`workflows/README.md`](workflows/README.md) for the list of workflows, what
-each is for, how to adopt one, and how `wf sync` / `MIGRATIONS.md` keep adopters
-current.
+```bash
+cd your-project
+wf adopt str8-2-main        # or: issue-gated, todo-gated
+```
 
-## This repo runs `str8-2-main` on itself
+This copies the workflow's files into `.claude/` as real, committed files —
+adopters are self-contained, not linked back to this store. Then, in Claude
+Code in that project, say **"read `.claude/INIT.md` and follow it"** to fill
+in the repo-specific config and delete the interview file.
 
-`.claude/` here is an adopter of [`workflows/str8-2-main/`](workflows/str8-2-main/):
-`commands/` / `agents/` / `hooks/` / `WORKFLOW.md` / `settings.json` are relative
-symlinks into `workflows/str8-2-main/core/`, and `.claude/project.json` +
-`.claude/settings.local.json` hold this repo's specifics. Non-trivial work goes
-through plan mode with a task breakdown; `/check` validates every JSON file and
-lints the Markdown with [PyMarkdown](https://github.com/jackdewinter/pymarkdown)
-before anything ships; `/ship` makes a header-only commit and pushes straight to
-`main`. See [`.claude/WORKFLOW.md`](.claude/WORKFLOW.md). One-time on a fresh
-machine: `pipx install pymarkdownlnt`, then `wf link`.
+## Keeping an adopted repo in sync
 
-Behavior changes to the workflow are made in `workflows/str8-2-main/core/`
-directly — they take effect here immediately (same clone).
+Pulling this store doesn't change an adopted repo by itself — you have to
+sync:
+
+```bash
+wf sync              # git-pull the store, reconcile every registered repo's core files
+wf status <repo>     # check one repo without pulling
+```
+
+For each core file, `wf sync` compares three versions — what the repo last
+synced, what the store has now, and what's on disk in the repo — and acts
+per file:
+
+- Repo hasn't touched it, store moved on → copied in automatically.
+- Repo edited it, store didn't change → left alone.
+- **Both changed** → the repo's file is left untouched, and the store's new
+  version is written next to it as `<file>.core-new`. Merge `.core-new`'s
+  content into the real file by hand, delete `.core-new`, and run `wf sync`
+  again — once the file matches the store, the conflict clears on its own.
+
+`wf status` also surfaces any `MIGRATIONS.md` entries a repo hasn't
+acknowledged yet — changes that need a manual step beyond copying a file
+(a new `project.json` key, for example). `wf sync --accept <repo>` records
+those as done once you've handled them.
+
+## Editing this store
+
+If you're changing a workflow's `core/`, or this repo's own setup, see
+[`.claude/CLAUDE.md`](.claude/CLAUDE.md) — this repo adopts `str8-2-main` on
+itself the same way any other project would.

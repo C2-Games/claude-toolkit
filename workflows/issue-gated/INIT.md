@@ -1,10 +1,10 @@
 # INIT -- tailor this workflow to the current repo
 
 `wf adopt issue-gated` has already run here: `.claude/` exists, the `core/`
-subtrees (`commands/`, `agents/`, `hooks/`, `WORKFLOW.md`, `settings.json`) are
-symlinked into the central store, and the `local/` templates (`project.json`,
-`settings.local.json`, `CLAUDE.md`, `ARCHITECTURE.md`) are copied in. Nothing in
-`core/` is ever edited per-project -- your job is to fill the local files, then
+files (`commands/`, `agents/`, `hooks/`, `WORKFLOW.md`, `settings.json`) and
+the `local/` templates (`project.json`, `settings.local.json`, `CLAUDE.md`,
+`ARCHITECTURE.md`) are all copied in as real files. Nothing in `core/` is
+ever edited per-project -- your job is to fill the local files, then
 **delete this file**.
 
 Do not skip the confirmation step -- the repo slug and the check commands break
@@ -56,12 +56,13 @@ runtime from `origin/HEAD`.
 | File | What to set |
 |---|---|
 | `.claude/project.json` | `find_expr`, `format_cmd`, `lint_cmd`, `test_cmd` (blank = skip), `issue_assignees`, `uses_milestones`, `doc_drift_watch` (list) |
-| `.claude/settings.local.json` | `env.GH_REPO` -> real slug; add the format / lint / test executables to `permissions.allow` (e.g. `"Bash(pytest*)"`). The `git` / `gh issue` allows and the commit/push denies live in the symlinked `settings.json` -- do not duplicate them. |
+| `.claude/settings.local.json` | `env.GH_REPO` -> real slug; add the format / lint / test executables to `permissions.allow` (e.g. `"Bash(pytest*)"`). The `git` / `gh issue` allows and the commit/push denies live in `.claude/settings.json` -- do not duplicate them. |
 | `.claude/ARCHITECTURE.md` | If the user gave rules: replace the `## Rules` examples, update the intro and diagram, and **delete the `<!-- ARCHITECTURE-TEMPLATE-UNFILLED -->` marker line**. If not: leave it exactly as-is (`architecture-checker` no-ops while the marker is present). |
 
 Do **not** edit anything under `.claude/commands/`, `.claude/agents/`,
-`.claude/hooks/`, or `.claude/WORKFLOW.md` -- they are symlinks into the store.
-If the language style skill needs naming, that is a `.claude/CLAUDE.md` note, not
+`.claude/hooks/`, or `.claude/WORKFLOW.md` -- they're the workflow's core
+files, kept current by `wf sync`, not hand-edited per project. If the
+language style skill needs naming, that is a `.claude/CLAUDE.md` note, not
 a core edit -- the agents check `.claude/skills/` themselves.
 
 ## 4. CLAUDE.md
@@ -74,10 +75,9 @@ Code built-in) generates it from the codebase.
 
 - Confirm `gh` is on `PATH` and authenticated (`gh auth status`).
 - Confirm `python3` (or `python`) is on `PATH`.
-- `git status` should show `.claude/project.json`,
-  `.claude/settings.local.json`, `.claude/ARCHITECTURE.md`, `.claude/CLAUDE.md`,
-  and `.claude/.workflow` as the only new tracked files -- the symlinks are
-  gitignored.
+- `git add .claude` and commit -- everything under `.claude/` is a real file
+  now (core files included), nothing is gitignored except runtime state and
+  `*.core-new` conflict scratch.
 
 ## 6. Finish
 

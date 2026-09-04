@@ -12,8 +12,9 @@ A personal library of Claude Code building blocks, and the **central store** the
   `~/.claude/skills/` (personal) or a project's `.claude/skills/` (team).
 - `workflows/<name>/` -- complete `.claude/` setups that impose one way of
   working on a repo. A repo **adopts** a workflow with `wf adopt <name>`, which
-  symlinks the workflow's `core/` into the repo's `.claude/` and copies its
-  `local/` templates in as real files.
+  copies the workflow's `core/` and its `local/` templates into the repo's
+  `.claude/` as real, committed files. Adopters are self-contained -- nothing
+  in an adopted repo points back at this store.
 
 ## The store / overlay / sync model (the load-bearing structure)
 
@@ -21,10 +22,11 @@ Each `workflows/<name>/` has two layers:
 
 - **`core/`** -- every file that is identical for every repo running the
   workflow: `commands/*.md`, `agents/*.md`, `hooks/*.py`, `WORKFLOW.md`,
-  `settings.core.json`. An adopting repo **symlinks** these into `.claude/`
-  (`.claude/commands` -> `<store>/workflows/<name>/core/commands`, etc.), so a
-  `git pull` of the store upgrades every adopter at once. `core/` files carry
-  **zero per-project values** -- see "Parameter discipline" below.
+  `settings.core.json`. `wf adopt` **copies** these into `.claude/`
+  (`.claude/commands/`, etc., renaming `settings.core.json` ->
+  `settings.json`). A `git pull` of the store does **not** by itself change an
+  adopter -- run `wf sync` (see `bin/wf` below) to reconcile. `core/` files
+  carry **zero per-project values** -- see "Parameter discipline" below.
 - **`local/`** -- templates copied into `.claude/` as real, committed files at
   adopt time and owned by the repo thereafter: `project.json` (the one
   config file -- source glob, format/lint/test commands, and workflow knobs),
@@ -34,9 +36,9 @@ Each `workflows/<name>/` has two layers:
 
 Plus, per workflow: `VERSION` (an integer, bumped on any `core/` change) and
 `MIGRATIONS.md` (append-only; one block per change that needs an already-adopted
-repo to do something -- a new `project.json` key, a `settings.local.json` entry,
-a re-`wf link`). A pure-prose `core/` change adds no migration block; the
-symlink delivers it.
+repo to do something beyond a file copy -- a new `project.json` key, a
+`settings.local.json` entry). A pure-prose `core/` change adds no migration
+block; `wf sync` alone delivers it.
 
 `workflows/_shared/` holds files identical **across** workflows --
 `hooks/_hooklib.py`, `hooks/doc_drift.py`, `agents/{implementer,reviewer,
@@ -47,28 +49,26 @@ real divergence forces it.
 
 ### The three workflows
 
-- `workflows/issue-gated/` is canonical: every change traces to a GitHub issue,
-  goes through plan mode, is built by scoped `implementer` subagents, and passes
-  `/check` (format, lint, tests, `reviewer` agent) before `/pr` hands the human
-  the commit/push commands. Hooks: `issue_gate.py` (PreToolUse edit gate),
-  `doc_drift.py` (Stop), SessionStart.
-- `workflows/todo-gated/` is issue-gated with GitHub swapped for a
-  version-controlled `.claude/todos.json`, mutated **only** through
-  `scripts/todos.py` (never hand-edited; `validate_todos_json.py` enforces this
-  PostToolUse). `/pr` becomes `/finish`.
-- `workflows/str8-2-main/` is the stripped subset -- no work branch, no edit
-  gate, no `reviewer`/`architecture-checker`, no `doc_drift`. One SessionStart
-  hook (`working_mode.py`). `/ship` commits a header-only message and pushes to
-  the default branch itself.
+See [`workflows/README.md`](../workflows/README.md) for what each does and
+when to use it -- `issue-gated` (canonical, GitHub-issue-traced),
+`todo-gated` (same shape, backed by `.claude/todos.json` instead of GitHub),
+`str8-2-main` (the stripped subset this repo runs on itself, no work branch
+or edit gate).
 
 ### `bin/wf`
 
-Stdlib Python. `wf adopt <workflow> [dir]` sets up `.claude/`; `wf link [dir]`
-recreates the symlinks from `.claude/.workflow` after a fresh clone; `wf status`
-/ `wf sync` compare each registered repo's recorded `core_version` to the
-store's `VERSION` and print the pending `MIGRATIONS.md` blocks; `wf projects`
-lists the registry (`.projects`, gitignored). Adopting repos are registered in
-`.projects`.
+Stdlib Python. `wf adopt <workflow> [dir]` sets up `.claude/`, copying `core/`
+and `local/` in and recording a hash of every core file in
+`.claude/.workflow`. `wf sync [--accept] [dir ...]` git-pulls the store, then
+for each registered repo reconciles core files against those hashes: copies
+in an untouched update, leaves a locally-edited file alone, and -- when both
+sides changed the same file -- leaves the repo's file untouched and writes
+the store's version as `<file>.core-new` for a manual merge. `--accept`
+additionally records the store's `VERSION` for named repos, once any
+`MIGRATIONS.md` follow-up is done. `wf status [dir ...]` does the same
+reconciliation read-only (no pull, no writes) and prints pending
+`MIGRATIONS.md` blocks. `wf projects` lists the registry (`.projects`,
+gitignored). Adopting repos are registered in `.projects`.
 
 ## Parameter discipline (what keeps `core/` shareable)
 
@@ -104,9 +104,9 @@ instead, and update the relevant `INIT.md` and this section.
   Wired in `settings.core.json` as
   `python3 "$CLAUDE_PROJECT_DIR/.claude/hooks/X.py" || python "..."` with
   `"shell": "bash"` and a 15-20s `timeout`. Must resolve state against
-  `$CLAUDE_PROJECT_DIR` (not `__file__`), since `hooks/` is a symlink into the
-  store. Never fatally block a session -- except the gate hooks, which deny edits
-  by design.
+  `$CLAUDE_PROJECT_DIR` (not `__file__`), since `hooks/` is a real copy in
+  every adopter, not this store. Never fatally block a session -- except the
+  gate hooks, which deny edits by design.
 - **Skills** (`language-skills/*/SKILL.md`): frontmatter is `name:` + a
   trigger-phrase `description:` only; body is plain Markdown rules and
   before/after examples.
@@ -119,13 +119,15 @@ documents the cross-workflow dedup.
 
 ## This repo runs `str8-2-main` on itself
 
-`.claude/` here is an **adopter** of `workflows/str8-2-main/`: its
-`commands/` / `agents/` / `hooks/` / `WORKFLOW.md` / `settings.json` are
-**relative symlinks** into `workflows/str8-2-main/core/` (same repo), gitignored
-and recreated by `wf link`. The real committed files are `.claude/project.json`,
+`.claude/` here is an **adopter** of `workflows/str8-2-main/`, same as any
+other project: `commands/` / `agents/` / `hooks/` / `WORKFLOW.md` /
+`settings.json` are real, committed copies of
+`workflows/str8-2-main/core/`, plus `.claude/project.json`,
 `.claude/settings.local.json`, `.claude/CLAUDE.md`, `.claude/.workflow`.
-Behavior changes to the workflow are made in `workflows/str8-2-main/core/`
-directly -- they take effect here immediately (same clone).
+Because it's the *same clone*, editing `workflows/str8-2-main/core/` and
+running `wf sync .` here picks the change up immediately -- no separate pull
+needed, but still not automatic; run `wf sync .` after a `core/` edit like
+any other adopter would after a store pull.
 
 - Day-to-day operating manual: `.claude/WORKFLOW.md`.
 - Entry point: `/send-it <request>`, or just make a request. Non-trivial work
@@ -142,13 +144,14 @@ directly -- they take effect here immediately (same clone).
   pushes to the default branch. `git commit`/`push` are allowed here (unlike the
   other two workflows).
 - One-time setup on a fresh machine: `pipx install pymarkdownlnt` (or
-  `pip install --user --break-system-packages pymarkdownlnt`), then `wf link`.
+  `pip install --user --break-system-packages pymarkdownlnt`).
 
 ## Validating changes locally
 
-- Python: `git ls-files '*.py' | xargs python3 -m py_compile` -- and the moved
-  `core/` hooks are untracked until committed, so also
-  `python3 -m py_compile workflows/_shared/hooks/*.py workflows/*/core/hooks/*.py workflows/todo-gated/core/scripts/todos.py bin/wf`
+- Python: `git ls-files '*.py' | xargs python3 -m py_compile` -- covers
+  `bin/wf`, `workflows/_shared/hooks/*.py`, `workflows/*/core/hooks/*.py`, and
+  `workflows/todo-gated/core/scripts/todos.py` once committed; for uncommitted
+  edits to those, `py_compile` them directly first.
 - `todos.py`: `py_compile` covers syntax; behavior needs an adopted repo --
   `cd <adopter> && python3 .claude/scripts/todos.py validate`
 - Markdown: `python3 -m pymarkdown --config .pymarkdown.json scan -r <path>`
