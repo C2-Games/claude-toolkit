@@ -17,17 +17,29 @@ folded in; the next `wf sync` will see the file now matches the store and
 stop flagging it.
 
 Subcommands:
-  wf adopt <workflow> [dir]     set up .claude/ in dir (default: cwd)
-  wf status [dir ...]           show sync state + pending MIGRATIONS.md blocks
-  wf sync [--accept] [dir ...]  git pull the store, then reconcile core files;
-                                 --accept also records the store's VERSION for
-                                 each named repo (for changes MIGRATIONS.md
-                                 says need manual follow-up)
+  wf adopt <workflow> [dir]     set up .claude/ in an empty .claude/ dir
+  wf link <workflow> [dir]      register an existing non-empty .claude/ without
+                                 re-adopting (fills only missing files);
+                                 --at-version=N sets the acknowledged version
+                                 (default 0, so pending MIGRATIONS.md still show)
+  wf status [--porcelain] [dir ...]
+                                show sync state + pending MIGRATIONS.md blocks
+  wf sync [--accept] [--all] [dir ...]
+                                git pull the store, then: with no dir and no
+                                 --all, report only (writes nothing); with dirs
+                                 or --all, reconcile core files. --accept also
+                                 records the store's VERSION for each named repo.
+  wf diff [dir ...]             show a unified diff of every locally-edited core
+                                 file against the store (for folding fixes back)
+  wf backport <repo> <relpath>  copy a repo's edited core file back onto the
+                                 store source (no commit, no VERSION bump)
   wf projects                   list registered repos and their state
 
-Stdlib only.
+Any command given an explicit dir that is a valid adopter also enrolls it in
+the local .projects registry. Stdlib only.
 """
 
+import difflib
 import hashlib
 import json
 import os
@@ -35,9 +47,12 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from collections import Counter
 
-STORE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# realpath, not abspath: `wf` is normally a symlink on PATH into the store
+# (see the root README), and the store must resolve to the real checkout.
+STORE = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 REGISTRY = os.path.join(STORE, ".projects")
 # Real files/dirs copied from <store>/workflows/<wf>/core/ into an adopter's
 # .claude/. name -> ("file" | "dir", core-relative source). "scripts" is
@@ -77,6 +92,42 @@ def claude_dir(project):
     return os.path.join(os.path.abspath(project), ".claude")
 
 
+def git_run(*args, ok_returncodes=(0,)):
+    """Run git, return stdout ('' on any non-ok return / failure)."""
+    try:
+        done = subprocess.run(
+            ("git",) + args, capture_output=True, text=True, timeout=15
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return done.stdout if done.returncode in ok_returncodes else ""
+
+
+def store_fetched_days():
+    """Whole days since the store clone last fetched from its remote, or None.
+    Reads the mtime of .git/FETCH_HEAD -- no network."""
+    for name in ("FETCH_HEAD", "HEAD"):
+        path = os.path.join(STORE, ".git", name)
+        try:
+            age = time.time() - os.path.getmtime(path)
+        except OSError:
+            continue
+        return max(0, int(age // 86400))
+    return None
+
+
+def store_upstream_behind():
+    """Commits the store's checked-out branch is behind its already-fetched
+    upstream. 0 when current or when there is no upstream. No network."""
+    out = git_run(
+        "-C", STORE, "rev-list", "--count", "HEAD..@{u}", ok_returncodes=(0, 128)
+    )
+    try:
+        return int(out.strip())
+    except ValueError:
+        return 0
+
+
 def read_workflow_file(project):
     try:
         with open(os.path.join(claude_dir(project), ".workflow")) as handle:
@@ -91,6 +142,9 @@ def read_workflow_file(project):
 
 
 def write_workflow_file(project, data):
+    # The `store` key was written by older versions and never read -- it only
+    # committed an absolute machine path into the adopter. Drop it on every write.
+    data.pop("store", None)
     with open(os.path.join(claude_dir(project), ".workflow"), "w") as handle:
         json.dump(data, handle, indent=2)
         handle.write("\n")
@@ -109,10 +163,27 @@ def registry_read():
 def registry_add(project):
     project = os.path.abspath(project)
     entries = registry_read()
-    if project not in entries:
-        entries.append(project)
-        with open(REGISTRY, "w") as handle:
-            handle.write("\n".join(entries) + "\n")
+    if project in entries:
+        return
+    entries.append(project)
+    tmp = REGISTRY + ".tmp"
+    with open(tmp, "w") as handle:
+        handle.write("\n".join(entries) + "\n")
+    os.replace(tmp, REGISTRY)
+
+
+def maybe_register(project):
+    """Enroll `project` in the registry iff it is a valid adopter."""
+    if read_workflow_file(project):
+        registry_add(project)
+
+
+def resolve_targets(args):
+    """Non-flag args as abspaths, each auto-enrolled if it is an adopter."""
+    dirs = [os.path.abspath(a) for a in args if not a.startswith("-")]
+    for project in dirs:
+        maybe_register(project)
+    return dirs
 
 
 # ---- core-file sync --------------------------------------------------------
@@ -259,6 +330,23 @@ def pending_migrations(name, from_version):
 
 # ---- commands ---------------------------------------------------------
 
+def copy_local_templates(name, cdir):
+    """Copy workflows/<name>/local/* into cdir as real files, never clobbering
+    an existing file. Returns the list of relpaths actually written."""
+    localdir = os.path.join(STORE, "workflows", name, "local")
+    copied = []
+    for root, _dirs, files in os.walk(localdir):
+        for fname in files:
+            src = os.path.join(root, fname)
+            rel = os.path.relpath(src, localdir)
+            dst = os.path.join(cdir, rel)
+            if os.path.exists(dst):
+                continue
+            copy_one(src, dst)
+            copied.append(rel)
+    return copied
+
+
 def cmd_adopt(args):
     if not args:
         die("usage: wf adopt <workflow> [dir]")
@@ -274,29 +362,13 @@ def cmd_adopt(args):
     write_workflow_file(project, {
         "workflow": name,
         "core_version": store_version(name),
-        "store": STORE,
         "files": {},
     })
     wf = read_workflow_file(project)
     results = sync_core_files(project, wf, apply=True)
     write_workflow_file(project, wf)
 
-    # Copy local/ templates in as real files (never clobber).
-    localdir = os.path.join(wfdir, "local")
-    copied = []
-    for root, _dirs, files in os.walk(localdir):
-        for fname in files:
-            src = os.path.join(root, fname)
-            rel = os.path.relpath(src, localdir)
-            dst = os.path.join(cdir, rel)
-            if os.path.exists(dst):
-                continue
-            os.makedirs(os.path.dirname(dst), exist_ok=True)
-            with open(src, "rb") as fh:
-                blob = fh.read()
-            with open(dst, "wb") as fh:
-                fh.write(blob)
-            copied.append(rel)
+    copied = copy_local_templates(name, cdir)
 
     # INIT.md is the first-run interview script -- copy it in too, unless
     # this workflow has none.
@@ -314,6 +386,135 @@ def cmd_adopt(args):
     print()
     print("Next: open Claude Code in {} and say:".format(project))
     print('  read .claude/INIT.md and follow it')
+
+
+def cmd_link(args):
+    flags = [a for a in args if a.startswith("-")]
+    pos = [a for a in args if not a.startswith("-")]
+    if not pos:
+        die("usage: wf link <workflow> [dir] [--at-version=N]")
+    name = pos[0]
+    project = os.path.abspath(pos[1] if len(pos) > 1 else ".")
+    at_version = 0
+    for flag in flags:
+        if flag.startswith("--at-version="):
+            try:
+                at_version = int(flag.split("=", 1)[1])
+            except ValueError:
+                die("--at-version needs an integer")
+        else:
+            die("unknown flag {!r}".format(flag))
+
+    workflow_dir(name)  # validates the workflow exists
+    cdir = claude_dir(project)
+    if not (os.path.isdir(cdir) and os.listdir(cdir)):
+        die("{} is empty or missing -- use `wf adopt` instead".format(cdir))
+    if read_workflow_file(project):
+        die("{} already has .claude/.workflow -- use `wf sync`".format(cdir))
+
+    core_dir = os.path.join(STORE, "workflows", name, "core")
+    manifest, filled = {}, []
+    for relpath, src in sorted(iter_core_files(core_dir)):
+        dst = os.path.join(cdir, relpath.replace("/", os.sep))
+        # Base = current store hash, always. A stale-but-present file then
+        # classifies as `local-edit` (left alone, shown by `wf diff`), never
+        # `updated` (which would clobber it).
+        manifest[relpath] = hash_file(src)
+        if not os.path.isfile(dst):
+            copy_one(src, dst)
+            filled.append(relpath)
+
+    write_workflow_file(project, {
+        "workflow": name,
+        "core_version": at_version,
+        "files": manifest,
+    })
+    filled += copy_local_templates(name, cdir)
+    registry_add(project)
+
+    print("linked {} in {}  (core_version={})".format(name, project, at_version))
+    print("  filled {} missing file(s): {}".format(
+        len(filled), ", ".join(sorted(filled)) or "none"))
+    print()
+    print("Next: `wf status {0}` (works through pending MIGRATIONS.md),".format(project))
+    print("      `wf diff {0}` to review pre-existing core divergence,".format(project))
+    print("      then `wf sync --accept {0}` once you're done.".format(project))
+
+
+DIFF_TAGS = {"local-edit", "conflict", "new-conflict", "converged"}
+
+
+def _read_lines(path):
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as handle:
+            return handle.readlines()
+    except OSError:
+        return []
+
+
+def cmd_diff(args):
+    projects = resolve_targets(args) or registry_read()
+    for project in projects:
+        wf = read_workflow_file(project) if os.path.isdir(project) else None
+        if not wf:
+            print("  {}  -- not adopted".format(project))
+            continue
+        core_dir = os.path.join(STORE, "workflows", wf["workflow"], "core")
+        store_files = dict(iter_core_files(core_dir))
+        results = sync_core_files(project, wf, apply=False)
+        printed = False
+        for relpath, tag in sorted(results.items()):
+            if tag not in DIFF_TAGS:
+                continue
+            store_src = store_files.get(relpath)
+            local_path = os.path.join(
+                claude_dir(project), relpath.replace("/", os.sep))
+            chunk = "".join(difflib.unified_diff(
+                _read_lines(store_src) if store_src else [],
+                _read_lines(local_path),
+                fromfile="store: workflows/{}/core/{}".format(
+                    wf["workflow"], relpath),
+                tofile="local: {}/.claude/{}".format(project, relpath),
+            ))
+            if not chunk:
+                continue
+            if not printed:
+                print("=== {}  [{}]".format(project, wf["workflow"]))
+                printed = True
+            print("--- [{}] {}".format(tag, relpath))
+            sys.stdout.write(chunk)
+            if not chunk.endswith("\n"):
+                sys.stdout.write("\n")
+        if not printed:
+            print("  {}  -- no local core edits".format(project))
+
+
+def cmd_backport(args):
+    if len(args) < 2:
+        die("usage: wf backport <repo> <core-relpath>")
+    project = os.path.abspath(args[0])
+    relpath = args[1].replace("\\", "/")
+    wf = read_workflow_file(project)
+    if not wf:
+        die("{} is not an adopter (no .claude/.workflow)".format(project))
+    core_dir = os.path.join(STORE, "workflows", wf["workflow"], "core")
+    store_files = dict(iter_core_files(core_dir))
+    if relpath not in store_files:
+        die("{!r} is not a core file for workflow {!r}".format(
+            relpath, wf["workflow"]))
+    src = os.path.join(claude_dir(project), relpath.replace("/", os.sep))
+    if not os.path.isfile(src):
+        die("{} does not exist".format(src))
+
+    dst = store_files[relpath]
+    copy_one(src, dst)
+    real = os.path.realpath(dst)
+    print("backported {}".format(src))
+    print("        -> {}".format(real))
+    if "_shared" in os.path.relpath(real, STORE).split(os.sep):
+        print("  NOTE: shared file -- this reaches every workflow that symlinks it.")
+    print("  Now: review `git -C {} diff`; bump VERSION + add a MIGRATIONS.md".format(STORE))
+    print("  block if adopters must act; commit; then `wf sync`.")
 
 
 def _status_one(project):
@@ -342,18 +543,50 @@ def _status_one(project):
         print()
 
 
+def _status_porcelain(project):
+    """One tab-separated line: <path> <workflow> <state> <attention> <fetched_days>
+
+    state: current | behind:vN->vM | behind:upstream   (upstream = store clone
+    has fetched commits it has not checked out; `wf sync` pulls them).
+    fetched_days: whole days since the store clone last fetched, or `-`.
+    """
+    wf = read_workflow_file(project) if os.path.isdir(project) else None
+    if not wf:
+        print("{}\t-\tunknown\t0\t-".format(project))
+        return
+    sv, pv = store_version(wf["workflow"]), wf["core_version"]
+    results = sync_core_files(project, wf, apply=False)
+    attention = sum(1 for t in results.values() if t in ATTENTION_TAGS)
+    if pv < sv:
+        state = "behind:v{}->v{}".format(pv, sv)
+    elif store_upstream_behind():
+        state = "behind:upstream"
+    else:
+        state = "current"
+    days = store_fetched_days()
+    print("{}\t{}\t{}\t{}\t{}".format(
+        project, wf["workflow"], state, attention,
+        "-" if days is None else days,
+    ))
+
+
 def cmd_status(args):
-    projects = [os.path.abspath(a) for a in args] or registry_read()
+    porcelain = "--porcelain" in args
+    projects = resolve_targets(args) or registry_read()
     if not projects:
         print("no registered projects (run `wf adopt` somewhere)")
         return
     for project in projects:
-        _status_one(project)
+        if porcelain:
+            _status_porcelain(project)
+        else:
+            _status_one(project)
 
 
 def cmd_sync(args):
     accept = "--accept" in args
-    named = [os.path.abspath(a) for a in args if not a.startswith("-")]
+    sync_all = "--all" in args
+    named = resolve_targets(args)
     result = subprocess.run(
         ["git", "-C", STORE, "pull", "--ff-only"],
         capture_output=True, text=True,
@@ -364,6 +597,13 @@ def cmd_sync(args):
         die("store pull failed -- resolve it in {} and retry".format(STORE))
 
     projects = named or registry_read()
+    # No dir and no --all: report only, never write. The Phase-2 notify hook
+    # auto-enrolls every repo you open, so a bare `wf sync` reconciling all of
+    # them would rewrite .claude/ in repos you aren't working in.
+    apply = bool(named) or sync_all
+    if not apply:
+        print("(reporting only -- pass a dir or --all to reconcile)")
+
     for project in projects:
         if not os.path.isdir(project):
             print("  {}  -- MISSING (path no longer exists)".format(project))
@@ -374,8 +614,9 @@ def cmd_sync(args):
             continue
         sv = store_version(wf["workflow"])
         pv = wf["core_version"]
-        results = sync_core_files(project, wf, apply=True)
-        write_workflow_file(project, wf)
+        results = sync_core_files(project, wf, apply=apply)
+        if apply:
+            write_workflow_file(project, wf)
 
         flag = "current" if pv >= sv else "BEHIND v{}->v{}".format(pv, sv)
         print("  {}  [{}]  {}".format(project, wf["workflow"], flag))
@@ -419,8 +660,11 @@ def cmd_projects(_args):
 
 COMMANDS = {
     "adopt": cmd_adopt,
+    "link": cmd_link,
     "status": cmd_status,
     "sync": cmd_sync,
+    "diff": cmd_diff,
+    "backport": cmd_backport,
     "projects": cmd_projects,
 }
 
