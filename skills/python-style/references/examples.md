@@ -49,6 +49,106 @@ even though this function could theoretically be given a negative price.
 Error types belong in type signatures and tests, not docstrings, per the
 project's convention. Also note that there is a whitespace after each docstring.
 
+## Data-holder classes: no class docstring
+
+`@dataclass`, Pydantic `BaseModel`, `Enum`, `NamedTuple`, `TypedDict` —
+the field list is the contract, so no docstring:
+
+```python
+# yes.
+@dataclass(frozen=True)
+class Criterion:
+    attr_key: str
+    operator: Operator
+    operand: object
+
+
+class Operator(Enum):
+    EQ = "eq"
+    CONTAINS = "contains"
+
+
+class TaskItem(BaseModel):
+    id: int
+    text: str
+    status: Status = Status.TODO
+
+
+# no — docstring restates the class name in prose.
+@dataclass(frozen=True)
+class Criterion:
+    """A single attribute test: an operator applied to attr_key."""
+
+    attr_key: str
+    operator: Operator
+    operand: object
+```
+
+A cross-field invariant does *not* earn a class docstring back — put it
+on the field it constrains, or in the module docstring:
+
+```python
+# yes — the invariant lives on the fields it actually constrains.
+@dataclass
+class CommandResult:
+    messages: list[str] = field(default_factory=list)
+    exit_code: int = 0
+    # at most one of item_view / tree_view is ever set: a command
+    # echoes back either a flat list or a nested tree, never both.
+    item_view: TaskList | None = None
+    tree_view: TaskList | None = None
+
+
+# no — "invariant" is not a licence for a class docstring.
+@dataclass
+class CommandResult:
+    """Outcome of a mutating command. At most one of item_view /
+    tree_view is set.
+    """
+
+    messages: list[str] = field(default_factory=list)
+    ...
+```
+
+A `model_validator` / `field_validator` / `property` on a Pydantic model
+does not make it a behavior class — still a data holder, still no
+docstring. A class with real methods (a service, a parser assembler, an
+exception type) keeps normal docstring rules, held to a summary line.
+
+## Module docstrings: one line
+
+```python
+# yes.
+"""Per-command orchestration between the CLI and storage/models."""
+
+# no — multi-paragraph header duplicating ARCHITECTURE.md / CLAUDE.md.
+"""Per-command orchestration between the CLI and storage/models.
+
+Each function loads through taskli.storage, mutates via model methods,
+saves, and returns plain data or a CommandResult. Nothing here imports
+taskli.render or prints — the CLI layer turns these results into
+console output.
+"""
+```
+
+## Comments that restate architecture docs
+
+```python
+# yes — a pointer, if the reader needs one at all.
+MODIFIER_FLAGS: dict[str, ModifierSpec] = {  # see ARCHITECTURE.md rule 2.
+    ...
+}
+
+# no — a paragraph re-explaining a rule that already lives in the doc.
+# attribute-backed modifier flags, keyed by the same field names the
+# registry uses. argparse vocabulary (flag strings, metavar, choices)
+# can't live in models/registry.py -- architecture rule 2 keeps it out
+# of models/ -- so this half of the split table lives here.
+MODIFIER_FLAGS: dict[str, ModifierSpec] = {
+    ...
+}
+```
+
 ## Static typing and overloads
 
 ```python

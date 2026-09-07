@@ -4,17 +4,40 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-A personal library of Claude Code building blocks, and the **central store** the
-`bin/wf` CLI links them into other repos from. Two product lines:
+A personal library of Claude Code building blocks. Two channels, each with its
+own delivery mechanism:
 
-- `language-skills/<lang>/<skill>/` -- per-language code-style skills, each a
-  `SKILL.md` plus optional `assets/`, `scripts/`, `references/`. Copied to
-  `~/.claude/skills/` (personal) or a project's `.claude/skills/` (team).
+- `skills/<name>/` -- reusable skills, each a `SKILL.md` plus optional
+  `assets/`, `scripts/`, `references/`. Shipped as the **`toolkit-skills`
+  plugin** via the root `.claude-plugin/marketplace.json`; machines install it
+  once and it auto-updates. No longer hand-copied into `~/.claude/skills/`. See
+  "Skills ship as a plugin" below.
 - `workflows/<name>/` -- complete `.claude/` setups that impose one way of
-  working on a repo. A repo **adopts** a workflow with `wf adopt <name>`, which
-  copies the workflow's `core/` and its `local/` templates into the repo's
-  `.claude/` as real, committed files. Adopters are self-contained -- nothing
-  in an adopted repo points back at this store.
+  working on a repo, delivered by the **`bin/wf` CLI**. A repo **adopts** a
+  workflow with `wf adopt <name>` (or `wf link <name>` for a repo that already
+  has a non-empty `.claude/`), which copies the workflow's `core/` and its
+  `local/` templates into the repo's `.claude/` as real, committed files.
+  Adopters are self-contained -- nothing in an adopted repo points back at this
+  store.
+
+### Skills ship as a plugin
+
+- Layout is fixed by Claude Code: `skills/<name>/SKILL.md`, flat, **real files
+  only** -- symlinks inside a plugin's skill dirs are not followed, so `skills/`
+  cannot borrow from `_shared/` the way `workflows/*/core/` does. Each dir name
+  must equal its `name:` frontmatter.
+- `.claude-plugin/marketplace.json` and `.claude-plugin/plugin.json` both **omit
+  `version`** -- the git commit SHA drives update detection, so any pushed change
+  propagates.
+- `marketplace.json` uses `source: "./"` -- the plugin root is the repo root, so
+  only `skills/` is exposed today. A future top-level `commands/`, `agents/`, or
+  `hooks/` directory would silently become plugin content; keep those under
+  `workflows/` where they belong.
+- `workflows/_shared/agents/*.md` are deliberately **not** in the plugin: they
+  are workflow-coupled (they reference the gate hooks and `WORKFLOW.md`), and a
+  plugin agent goes globally active in every project.
+- Per-machine setup (marketplace add + install + `autoUpdate` +
+  `enabledPlugins`) is in the root `README.md`.
 
 ## The store / overlay / sync model (the load-bearing structure)
 
@@ -107,9 +130,11 @@ instead, and update the relevant `INIT.md` and this section.
   `$CLAUDE_PROJECT_DIR` (not `__file__`), since `hooks/` is a real copy in
   every adopter, not this store. Never fatally block a session -- except the
   gate hooks, which deny edits by design.
-- **Skills** (`language-skills/*/SKILL.md`): frontmatter is `name:` + a
-  trigger-phrase `description:` only; body is plain Markdown rules and
-  before/after examples.
+- **Skills** (`skills/*/SKILL.md`): frontmatter is `name:` (must equal the
+  directory name) + a trigger-phrase `description:`, plus
+  `disable-model-invocation: true` for an explicit-invoke-only skill; body is
+  plain Markdown rules and before/after examples. Real files only -- no symlinks
+  (see "Skills ship as a plugin").
 - Prose style across the repo's docs: `--` not em-dash; tables and Mermaid
   `flowchart TD` for lifecycle diagrams.
 

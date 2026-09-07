@@ -1,9 +1,19 @@
 # claude-toolkit
 
-A personal library of Claude Code building blocks — language-style skills and
-full `.claude/` workflows — plus the `bin/wf` CLI that delivers them into
-other repos. Nothing here runs on its own; each piece changes how Claude
-behaves in the repo that adopts it.
+A personal library of Claude Code building blocks — reusable skills and full
+`.claude/` workflows. Nothing here runs on its own; each piece changes how
+Claude behaves in the repo that adopts it. Two delivery channels:
+
+| | Skills (`skills/`) | Workflows (`workflows/`) |
+|---|---|---|
+| Delivered by | the `toolkit-skills` plugin | the `bin/wf` CLI (`wf adopt` / `wf link`) |
+| Lands as | a plugin, shared across every project | real, committed files in each repo's `.claude/` |
+| Updates | automatically (plugin auto-update) | on demand (`wf sync`); a SessionStart hook tells you when you're behind |
+
+Workflows land as committed files per repo — a teammate gets them from the
+repo, not this store — so a bad auto-push would rewrite every adopter's
+`.claude/` mid-session. Skills are advisory and identical everywhere, so they
+update themselves.
 
 ## Where to put this repo
 
@@ -19,22 +29,57 @@ ln -s ~/.claude/claude-toolkit/bin/wf ~/.local/bin/wf   # if ~/.local/bin is on 
 # otherwise: add `export PATH="$HOME/.claude/claude-toolkit/bin:$PATH"` to your shell rc
 ```
 
-## `language-skills/`
+## `skills/`
 
-Code-style skills, one per language. Each defines the naming, commenting, docstring,
-and formatting conventions Claude applies when writing or editing that language —
-auto-invoked, not waited on.
+Reusable skills, one directory each. Most are code-style skills that define the
+naming, commenting, docstring, and formatting conventions Claude applies when
+writing or editing that language — auto-invoked, not waited on.
 
 | Path | Skill |
 |---|---|
-| `language-skills/python/python-style/` | Python style — numpy docstrings, mypy typing, black at 80 |
-| `language-skills/python/python-tests/` | pytest conventions (companion to `python-style`) |
-| `language-skills/c++/cpp-style/` | C++ style — Google base + Allman braces, naming, Doxygen placement |
+| `skills/python-style/` | Python style — numpy docstrings, mypy typing, black at 80 |
+| `skills/python-tests/` | pytest conventions (companion to `python-style`) |
+| `skills/cpp-style/` | C++ style — Google base + Allman braces, naming, Doxygen placement |
+| `skills/unslop/` | strip AI tells from prose — explicit-invoke only |
 
-To use one: copy the skill directory into `~/.claude/skills/` so it applies across
-every project you work on. Only put it in a project's own `.claude/skills/` when
-the team shares a single style and it needs to travel with the repo — a
-project-level skill overrides your personal one for that repo.
+These ship as the `toolkit-skills` plugin (`.claude-plugin/marketplace.json`)
+and update themselves — no `wf`, no hand-copying into `~/.claude/skills/`.
+
+### One-time plugin setup, per machine
+
+```bash
+# 1. this repo is cloned at ~/.claude/claude-toolkit and wf is on PATH (above)
+# 2. in any Claude Code session:
+/plugin marketplace add C2-Games/claude-toolkit
+/plugin install toolkit-skills@claude-toolkit
+```
+
+Then add to `~/.claude/settings.json` so new commits land without a manual
+update:
+
+```json
+{
+  "extraKnownMarketplaces": {
+    "claude-toolkit": {
+      "source": { "source": "github", "repo": "C2-Games/claude-toolkit" },
+      "autoUpdate": true
+    }
+  },
+  "enabledPlugins": { "toolkit-skills@claude-toolkit": true }
+}
+```
+
+The repo is private, so the machine needs working GitHub git auth (`gh` or ssh)
+before `/plugin marketplace add`. With `autoUpdate` on, Claude Code refreshes the
+marketplace and installed plugin in the background a few minutes after launch;
+pick the new version up with `/plugin` → reload or on the next launch.
+
+If you still have loose `~/.claude/skills/{python-style,python-tests,unslop}`
+copies from before, delete them once the plugin is confirmed loaded (`/plugin`
+lists `toolkit-skills` and the skills invoke) — otherwise the names collide.
+
+To change a skill: edit it in this repo, `/check` + `/ship`. Every machine gets
+it on its next auto-update.
 
 ## `workflows/`
 

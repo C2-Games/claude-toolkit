@@ -1,5 +1,5 @@
 ---
-name: python-style-guide
+name: python-style
 description: Enforces a specific Python code style for Python projects — numpy-style docstrings, static typing with mypy, black formatting at 80 characters, strict naming conventions, and comment discipline. Use this skill whenever writing, editing, reviewing, or refactoring any Python code (.py files) for this user, including new functions, classes, modules, or scripts — even for small snippets or single-function edits. Also use it when the user asks to "clean up," "format," "lint," or "make this more idiomatic" for any Python file. Do not wait for the user to explicitly mention style guidelines; apply these rules by default to all Python output. For pytest test files specifically, also load the companion `python-tests` skill.
 ---
 
@@ -36,10 +36,28 @@ actually needs:
   description only. No `Parameters` or `Returns` — the point of a
   private helper is that its contract is local and small enough not
   to need one.
-- **Dataclasses**: a one-line (or short) summary only. No `Parameters`
-  section — the field names, types, and defaults in the class body
-  already are the contract; a `Parameters` block just restates them in
-  prose and drifts the moment a field is added, renamed, or removed.
+- **Data-holder classes — no class docstring at all.** This covers
+  `@dataclass` (frozen or not), Pydantic `BaseModel`, `Enum`,
+  `NamedTuple`, and `TypedDict`: the field names, types, and defaults
+  in the class body already are the contract, and a docstring on top
+  of them only restates it in prose and drifts the moment a field is
+  added, renamed, or removed. This holds even when the docstring
+  states a real cross-field invariant ("at most one of `x` / `y` is
+  set", "every facet is independently optional") — that belongs in a
+  comment on the specific field it constrains, or in the module
+  docstring, not a class docstring. A `model_validator` /
+  `field_validator` / `property` does not make a Pydantic model a
+  "behavior class" — it's still a data holder, still no docstring.
+- **Classes with real behavior** (methods beyond validators /
+  properties — services, parser assemblers, orchestration helpers,
+  exception classes): normal docstring rules above apply. The class
+  name plus method docstrings carry the weight; keep any class
+  docstring to a summary line.
+- **Module docstrings — one line.** A single summary line of what the
+  module is for. Layering, dependency-direction, "imports no `render`
+  and prints nothing", and similar cross-module rationale belong in
+  `ARCHITECTURE.md` / `CLAUDE.md`, not a multi-paragraph module
+  header that duplicates them and drifts.
 
 After each docstring, there should be a whitespace before the next line of code.
 
@@ -108,6 +126,14 @@ explain *why* something is done a particular way, not to restate what
 well-named variables and straightforward operations already make
 obvious. A comment on self-explanatory code is noise the next reader
 has to filter out.
+
+Do not restate architecture-doc content in a code comment. If the
+"why" is already written down in `ARCHITECTURE.md` / `CLAUDE.md` (a
+numbered rule, a layering constraint, "this table is split out of
+`models/` because…"), don't paste a paragraph re-explaining it next
+to the code. A one-line pointer (`# see ARCHITECTURE.md rule 2.`) is
+fine; the prose copy is not — it drifts from the doc and doubles the
+maintenance surface.
 
 ## Strings, logging, and imports
 

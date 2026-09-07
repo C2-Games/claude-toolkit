@@ -1,0 +1,11 @@
+{
+  "name": "claude-toolkit",
+  "owner": { "name": "calvin-mcelvain" },
+  "plugins": [
+    {
+      "name": "toolkit-skills",
+      "source": "./",
+      "description": "Shared code-style and prose skills."
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "name": "toolkit-skills",
+  "description": "Shared skills: Python style + pytest conventions, C++ style, and the unslop prose editor. Language skills auto-invoke on matching files; unslop is explicit-invoke.",
+  "author": { "name": "calvin-mcelvain" }
+}
