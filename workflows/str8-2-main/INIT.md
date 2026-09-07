@@ -27,8 +27,8 @@ Gather, without asking:
   "does this still run" smoke command exists instead.
 - **Source layout** -- which top-level dirs hold code vs. docs/config, and the
   file extensions for the language(s).
-- **Language style skills** -- any under `.claude/skills/`, or the user's global
-  `~/.claude/skills/`.
+- **Language style skills** -- any under `.claude/skills/`, plus whatever the
+  user's `toolkit-skills` plugin (or other user-level skills) provides.
 
 Note: the **default branch is not configured** -- every command derives it at
 runtime from `origin/HEAD`. If the repo has no remote yet, tell the user `/ship`

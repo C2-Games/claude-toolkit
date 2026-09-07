@@ -26,7 +26,8 @@ Gather, without asking:
 - **`.github/PULL_REQUEST_TEMPLATE.md`** -- present or not.
 - **Branch / commit conventions** -- skim `git log --oneline -30`.
 - **Source layout** -- code vs. docs/config dirs, and the file extensions.
-- **Language style skills** -- any under `.claude/skills/` or `~/.claude/skills/`.
+- **Language style skills** -- any under `.claude/skills/`, plus whatever the
+  user's `toolkit-skills` plugin (or other user-level skills) provides.
 
 The default branch is **not configured** -- every command and hook derives it at
 runtime from `origin/HEAD`. If there is no remote, tell the user `/finish` needs

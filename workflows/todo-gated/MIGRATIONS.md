@@ -20,7 +20,8 @@ them.
 ## 2026-09-03 -- v0 -> v1
 
 Initial `core/` + `local/` split. Repos adopted before this used a flat
-`.claude/` copy.
+`.claude/` copy. `wf link` registers such a repo with `core_version 0`, so this
+block still shows -- work through it, then `wf sync --accept <repo>`.
 
 - [ ] Re-adopt with `wf adopt todo-gated` into a scratch dir, then move your
       filled `project.json` / `settings.local.json` / `ARCHITECTURE.md` and your
@@ -33,3 +34,18 @@ Initial `core/` + `local/` split. Repos adopted before this used a flat
       that set `MAIN_BRANCH` / `BASE_BRANCH`.
 - [ ] `doc_drift` now watches `settings.local.json` + `project.json` and reads
       extra paths from `project.json`'s `doc_drift_watch`.
+
+## 2026-09-07 -- v1 -> v2
+
+New shared `SessionStart` hook `workflow_notify.py`: it reports (never applies)
+when this repo is behind the claude-toolkit store, or when the local store
+clone has not fetched in a while. `wf sync` delivers both the hook file and the
+`settings.json` wiring.
+
+- [ ] Make sure `bin/wf` is on your PATH on every machine you open this repo on
+      (toolkit root README) -- the hook is silent without it. No other action if
+      your `settings.json` was unmodified.
+- [ ] If you had locally edited `.claude/settings.json`, `wf sync` leaves a
+      `settings.json.core-new`. Merge the new second `SessionStart` entry
+      (the `workflow_notify.py` block) into your `settings.json` and delete the
+      `.core-new` file.

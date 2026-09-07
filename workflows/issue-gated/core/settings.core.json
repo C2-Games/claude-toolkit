@@ -50,6 +50,16 @@
             "shell": "bash"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/workflow_notify.py\" || python \"$CLAUDE_PROJECT_DIR/.claude/hooks/workflow_notify.py\"",
+            "timeout": 15,
+            "shell": "bash"
+          }
+        ]
       }
     ],
     "Stop": [

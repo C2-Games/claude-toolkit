@@ -6,6 +6,7 @@ one place reaches every workflow:
 | file | used by |
 |---|---|
 | `hooks/_hooklib.py` | all three workflows |
+| `hooks/workflow_notify.py` | all three workflows |
 | `hooks/doc_drift.py` | issue-gated, todo-gated |
 | `agents/implementer.md` | all three |
 | `agents/reviewer.md` | issue-gated, todo-gated |

@@ -29,7 +29,8 @@ Gather, without asking:
   `git branch -a` for the prefixes in use.
 - **Source layout** -- which top-level dirs hold code vs. docs/config, and the
   file extensions.
-- **Language style skills** -- any under `.claude/skills/` or `~/.claude/skills/`.
+- **Language style skills** -- any under `.claude/skills/`, plus whatever the
+  user's `toolkit-skills` plugin (or other user-level skills) provides.
 
 The default branch is **not configured** -- every command and hook derives it at
 runtime from `origin/HEAD`.

@@ -80,18 +80,34 @@ or edit gate).
 
 ### `bin/wf`
 
-Stdlib Python. `wf adopt <workflow> [dir]` sets up `.claude/`, copying `core/`
-and `local/` in and recording a hash of every core file in
-`.claude/.workflow`. `wf sync [--accept] [dir ...]` git-pulls the store, then
-for each registered repo reconciles core files against those hashes: copies
-in an untouched update, leaves a locally-edited file alone, and -- when both
-sides changed the same file -- leaves the repo's file untouched and writes
-the store's version as `<file>.core-new` for a manual merge. `--accept`
-additionally records the store's `VERSION` for named repos, once any
-`MIGRATIONS.md` follow-up is done. `wf status [dir ...]` does the same
-reconciliation read-only (no pull, no writes) and prints pending
-`MIGRATIONS.md` blocks. `wf projects` lists the registry (`.projects`,
-gitignored). Adopting repos are registered in `.projects`.
+Stdlib Python. `STORE` is resolved with `realpath` (the CLI is normally a
+symlink on PATH). `wf adopt <workflow> [dir]` sets up an **empty** `.claude/`,
+copying `core/` + `local/` in and recording a hash of every core file in
+`.claude/.workflow`. `wf link <workflow> [dir]` does the same for a repo that
+**already has a non-empty `.claude/`**: fills only missing files, records
+`core_version 0` (default; `--at-version=N` overrides) so pending
+`MIGRATIONS.md` blocks still show, leaves any divergent file for `wf diff`.
+
+`wf sync [--accept] [--all] [dir ...]` git-pulls the store, then reconciles core
+files against the recorded hashes: copies in an untouched update, leaves a
+locally-edited file alone, and -- when both sides changed the same file --
+writes the store's version as `<file>.core-new` for a manual merge. **With no
+dir and no `--all` it reports only and writes nothing** -- the notify hook
+auto-enrolls every repo you open, so a blanket reconcile would rewrite
+`.claude/` in repos you aren't touching. `--accept` records the store's
+`VERSION` for named repos once any `MIGRATIONS.md` follow-up is done.
+
+`wf status [--porcelain] [dir ...]` reconciles read-only and prints pending
+`MIGRATIONS.md` blocks; `--porcelain` emits one tab-separated line per repo
+(`path  workflow  state  attention  store_fetched_days`) for the notify hook.
+`wf diff [dir ...]` prints a unified diff of every locally-edited core file
+against the store; `wf backport <repo> <relpath>` copies a repo's edited core
+file back onto the store source (no commit, no `VERSION` bump; warns on a
+`_shared/` target). `wf projects` lists the registry (`.projects`, gitignored).
+
+Any `wf` command given an explicit dir that is a valid adopter enrolls it in
+`.projects`. The `.workflow` file no longer carries a `store` key (an unused
+absolute machine path); `write_workflow_file` strips it on every write.
 
 ## Parameter discipline (what keeps `core/` shareable)
 
@@ -151,8 +167,9 @@ other project: `commands/` / `agents/` / `hooks/` / `WORKFLOW.md` /
 `.claude/settings.local.json`, `.claude/CLAUDE.md`, `.claude/.workflow`.
 Because it's the *same clone*, editing `workflows/str8-2-main/core/` and
 running `wf sync .` here picks the change up immediately -- no separate pull
-needed, but still not automatic; run `wf sync .` after a `core/` edit like
-any other adopter would after a store pull.
+needed, but still not automatic; run `wf sync .` (an explicit dir, so it
+applies) after a `core/` edit, and `wf sync --accept .` once the workflow
+`VERSION` has bumped (it is at **2** as of the notify-hook change).
 
 - Day-to-day operating manual: `.claude/WORKFLOW.md`.
 - Entry point: `/send-it <request>`, or just make a request. Non-trivial work
@@ -181,4 +198,13 @@ any other adopter would after a store pull.
   `cd <adopter> && python3 .claude/scripts/todos.py validate`
 - Markdown: `python3 -m pymarkdown --config .pymarkdown.json scan -r <path>`
 - Symlinks resolve: `find workflows .claude -xtype l` prints nothing
-- `wf` round-trip: `wf adopt str8-2-main <scratch>/r && wf status`
+- JSON: `python3 -m json.tool .claude-plugin/marketplace.json` /
+  `.claude-plugin/plugin.json` (both stay `version`-less)
+- `wf` round-trip: `wf adopt str8-2-main <scratch>/r && wf status`, plus
+  `wf link` into a hand-built non-empty `.claude/`, then `wf diff` / `wf backport`
+- Notify hook: `CLAUDE_PROJECT_DIR=<behind-adopter> python3
+  workflows/_shared/hooks/workflow_notify.py </dev/null` emits JSON
+  `additionalContext`; a current adopter with a fresh store clone, or no `wf`
+  on PATH, emits nothing
+- Skills plugin: `claude --plugin-dir "$PWD"` (or `/plugin marketplace add`
+  the local path), then confirm each skill loads and reads its `references/`

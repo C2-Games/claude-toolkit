@@ -89,7 +89,8 @@ imposes one way of working on a repo. Pick one in
 
 ```bash
 cd your-project
-wf adopt str8-2-main        # or: issue-gated, todo-gated
+wf adopt str8-2-main        # empty .claude/  — or: issue-gated, todo-gated
+wf link  str8-2-main        # existing non-empty .claude/ (hand-rolled or pre-split)
 ```
 
 This copies the workflow's files into `.claude/` as real, committed files —
@@ -99,16 +100,24 @@ in the repo-specific config and delete the interview file.
 
 ## Keeping an adopted repo in sync
 
-Pulling this store doesn't change an adopted repo by itself — you have to
-sync:
+Pulling this store doesn't change an adopted repo by itself — you sync:
 
 ```bash
-wf sync              # git-pull the store, reconcile every registered repo's core files
-wf status <repo>     # check one repo without pulling
+wf sync              # git-pull the store, then REPORT only (writes nothing)
+wf sync <repo>       # pull, then reconcile that repo   (--all for every repo)
+wf status <repo>     # one repo's sync state, no pull
+wf diff <repo>       # unified diff of every core file that repo has edited
+wf backport <repo> <relpath>   # fold that edit back onto the store's core/
 ```
 
-For each core file, `wf sync` compares three versions — what the repo last
-synced, what the store has now, and what's on disk in the repo — and acts
+A bare `wf sync` writes nothing — every adopted repo you open enrolls itself
+(via its `SessionStart` notify hook), so a blanket reconcile would touch repos
+you aren't working in. Name the repo, or pass `--all`. That same hook is what
+tells a session "this repo is behind the store, run `wf sync`" — it only
+reports; it needs `wf` on PATH.
+
+For each core file, `wf sync <repo>` compares three versions — what the repo
+last synced, what the store has now, and what's on disk in the repo — and acts
 per file:
 
 - Repo hasn't touched it, store moved on → copied in automatically.
@@ -122,6 +131,14 @@ per file:
 acknowledged yet — changes that need a manual step beyond copying a file
 (a new `project.json` key, for example). `wf sync --accept <repo>` records
 those as done once you've handled them.
+
+To fold an ad-hoc fix from one repo back into the store: `wf diff <repo>` to
+see it, `wf backport <repo> <relpath>` to copy it onto `core/` (a `_shared/`
+file reaches every workflow — it warns you). Then review, add a `MIGRATIONS.md`
+block if adopters must act, commit, and the next `wf sync <repo>` propagates it.
+
+Across machines: clone this store once per machine (at `~/.claude/claude-toolkit`),
+keep `wf` on PATH, and `wf sync` pulls it before reconciling.
 
 ## Editing this store
 

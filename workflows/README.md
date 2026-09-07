@@ -23,7 +23,15 @@ only; adopters always get real file content, never a symlink).
    This creates `.claude/`, copies `core/` and the `local/` templates in as
    real files, writes `.claude/.workflow` (which also tracks a hash of every
    core file, for `wf sync` later), and registers the repo. It refuses if
-   `.claude/` already exists and is non-empty -- merge by hand in that case.
+   `.claude/` already exists and is non-empty.
+
+   For a repo that **already has a non-empty `.claude/`** (a hand-rolled setup,
+   or one adopted before the `core/`/`local/` split), use `wf link <workflow>`
+   instead: it writes `.claude/.workflow`, fills only genuinely-missing files,
+   registers the repo, and records `core_version 0` so every pending
+   `MIGRATIONS.md` block still surfaces. It does not split a flat `settings.json`
+   into core/local -- run `wf diff` afterward to see what diverged and fix it by
+   hand.
 
 3. Open Claude Code in the project and say: **"read `.claude/INIT.md` and follow it"**.
 
@@ -61,13 +69,32 @@ Changes that also need a repo to *do* something beyond a file copy (a new
 `VERSION` is bumped.
 
 ```bash
-wf sync                 # git-pull the store, reconcile every repo's core files
-wf status <repo>        # check one repo's sync state + pending MIGRATIONS.md, no pull
-wf sync --accept <repo> # after working through a MIGRATIONS.md block, record the new version
+wf sync                 # git-pull the store, then REPORT only (writes nothing)
+wf sync <repo> [...]    # pull, then reconcile the named repo(s)
+wf sync --all           # pull, then reconcile every registered repo
+wf status <repo>        # one repo's sync state + pending MIGRATIONS.md, no pull
+wf sync --accept <repo> # after a MIGRATIONS.md block, record the new version
+wf diff <repo>          # unified diff of every core file this repo has edited
+wf backport <repo> <relpath>  # copy that edited core file back onto the store source
 ```
 
+A bare `wf sync` reports and writes nothing: opening any adopted repo enrolls
+it in the registry (via the `SessionStart` notify hook), so a blanket
+reconcile would rewrite `.claude/` in repos you aren't working in. Name the
+repo, or pass `--all`, to actually apply.
+
+`wf diff` / `wf backport` are the path for a fix you made ad hoc in one repo:
+`wf diff` shows it, `wf backport` copies it onto the store's `core/` (or, for a
+`_shared/` file, every workflow at once -- it warns you). Neither commits or
+bumps `VERSION`; review `git diff` in the store, add a `MIGRATIONS.md` block if
+adopters must act, commit, then `wf sync` propagates it.
+
 A pure-prose `core/` edit adds no `MIGRATIONS.md` block and needs no
-`--accept` -- `wf sync` alone picks up the file change.
+`--accept` -- `wf sync <repo>` alone picks up the file change.
+
+Every adopted repo also runs a `SessionStart` hook (`workflow_notify.py`, v2+)
+that says when the repo is behind the store or the store clone is stale. It
+only reports; you still run `wf sync` yourself. It needs `bin/wf` on PATH.
 
 ---
 
@@ -156,7 +183,8 @@ work still goes through **plan mode with a task breakdown**, and **`/check`
 two, `git commit`/`git push` are *not* denied — `/ship` verifies `/check` is
 current, makes a header-only commit (`type: description`, no body, no trailers),
 and pushes to the default branch itself. A `SessionStart` hook restates the mode
-and the uncommitted-file count; that is the only hook.
+and the uncommitted-file count; a second `SessionStart` hook
+(`workflow_notify.py`) reports when the toolkit store has run ahead of the repo.
 
 ```mermaid
 flowchart TD
