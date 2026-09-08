@@ -89,8 +89,9 @@ imposes one way of working on a repo. Pick one in
 
 ```bash
 cd your-project
-wf adopt str8-2-main        # empty .claude/  — or: issue-gated, todo-gated
-wf link  str8-2-main        # existing non-empty .claude/ (hand-rolled or pre-split)
+wf adopt str8-2-main          # empty .claude/  — or: issue-gated, todo-gated
+wf adopt str8-2-main --force  # non-empty .claude/, install the full workflow over it
+wf link  str8-2-main          # non-empty .claude/, fill only missing files
 ```
 
 This copies the workflow's files into `.claude/` as real, committed files —

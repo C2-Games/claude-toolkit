@@ -26,12 +26,24 @@ only; adopters always get real file content, never a symlink).
    `.claude/` already exists and is non-empty.
 
    For a repo that **already has a non-empty `.claude/`** (a hand-rolled setup,
-   or one adopted before the `core/`/`local/` split), use `wf link <workflow>`
-   instead: it writes `.claude/.workflow`, fills only genuinely-missing files,
-   registers the repo, and records `core_version 0` so every pending
-   `MIGRATIONS.md` block still surfaces. It does not split a flat `settings.json`
-   into core/local -- run `wf diff` afterward to see what diverged and fix it by
-   hand.
+   or one adopted before the `core/`/`local/` split), you have two choices:
+
+   - `wf adopt <workflow> --force` -- installs the **full** workflow over the
+     existing `.claude/`, exactly as a fresh `adopt` would: every core file is
+     written, `INIT.md` is dropped in, and `core_version` is set to the current
+     `VERSION`. A pre-existing file a core file would overwrite is kept as
+     `<file>.pre-adopt` for you to diff and delete. Non-core files (your own
+     custom commands) are untouched.
+   - `wf link <workflow>` -- the light touch: writes `.claude/.workflow`, fills
+     only genuinely-missing files, registers the repo, records `core_version 0`
+     so every pending `MIGRATIONS.md` block still surfaces. No `INIT.md`. Run
+     `wf diff` afterward to see what diverged and fix it by hand.
+
+   Neither splits a flat hand-rolled `settings.json` into core/local for you.
+   Under `--force` that file lands at `settings.json.pre-adopt` (core now owns
+   `settings.json`); move its `permissions.allow` entries and `GH_REPO` into
+   `.claude/settings.local.json`. Under `link` it stays put and `wf diff` flags
+   it.
 
 3. Open Claude Code in the project and say: **"read `.claude/INIT.md` and follow it"**.
 

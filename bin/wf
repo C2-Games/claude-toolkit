@@ -17,7 +17,12 @@ folded in; the next `wf sync` will see the file now matches the store and
 stop flagging it.
 
 Subcommands:
-  wf adopt <workflow> [dir]     set up .claude/ in an empty .claude/ dir
+  wf adopt <workflow> [dir]     set up .claude/ in an empty .claude/ dir.
+                                 --force installs the full workflow over a
+                                 non-empty .claude/ too: every core file is
+                                 written (a differing pre-existing one is kept
+                                 as <file>.pre-adopt) and INIT.md is dropped in,
+                                 unlike `wf link` which only fills gaps
   wf link <workflow> [dir]      register an existing non-empty .claude/ without
                                  re-adopting (fills only missing files);
                                  --at-version=N sets the acknowledged version
@@ -332,32 +337,78 @@ def pending_migrations(name, from_version):
 
 def copy_local_templates(name, cdir):
     """Copy workflows/<name>/local/* into cdir as real files, never clobbering
-    an existing file. Returns the list of relpaths actually written."""
+    an existing file. Returns (copied, skipped) -- relpaths written, and
+    relpaths left alone because the repo already had that file."""
     localdir = os.path.join(STORE, "workflows", name, "local")
-    copied = []
+    copied, skipped = [], []
     for root, _dirs, files in os.walk(localdir):
         for fname in files:
             src = os.path.join(root, fname)
             rel = os.path.relpath(src, localdir)
             dst = os.path.join(cdir, rel)
             if os.path.exists(dst):
+                skipped.append(rel)
                 continue
             copy_one(src, dst)
             copied.append(rel)
-    return copied
+    return copied, skipped
+
+
+def _backup_colliding_core(name, cdir):
+    """Move aside every existing .claude/ file a core file is about to
+    overwrite whose content differs from the store's, renaming it to
+    `<file>.pre-adopt`. Returns the relpaths moved. Dies before anything is
+    written if a core leaf path is a directory, or an ancestor dir of one is a
+    regular file -- `copy_one` cannot resolve either."""
+    core_dir = os.path.join(STORE, "workflows", name, "core")
+    backed = []
+    for relpath, src in sorted(iter_core_files(core_dir)):
+        dst = os.path.join(cdir, relpath.replace("/", os.sep))
+        # The leaf must not be a directory, and every ancestor under cdir that
+        # already exists must be one -- `copy_one`'s open()/makedirs can resolve
+        # neither, and it runs after .workflow is written.
+        parts = relpath.split("/")
+        for depth in range(1, len(parts) + 1):
+            node = os.path.join(cdir, os.sep.join(parts[:depth]))
+            leaf = depth == len(parts)
+            if os.path.exists(node) and os.path.isdir(node) == leaf:
+                die("{} exists but is {} -- resolve by hand before "
+                    "`wf adopt --force`".format(
+                        node, "a directory" if leaf else "not a directory"))
+        if os.path.isfile(dst) and hash_file(dst) != hash_file(src):
+            os.replace(dst, dst + ".pre-adopt")
+            backed.append(relpath)
+    return backed
 
 
 def cmd_adopt(args):
-    if not args:
-        die("usage: wf adopt <workflow> [dir]")
-    name = args[0]
-    project = os.path.abspath(args[1] if len(args) > 1 else ".")
+    flags = [a for a in args if a.startswith("-")]
+    pos = [a for a in args if not a.startswith("-")]
+    if not pos:
+        die("usage: wf adopt <workflow> [dir] [--force]")
+    force = False
+    for flag in flags:
+        if flag == "--force":
+            force = True
+        else:
+            die("unknown flag {!r}".format(flag))
+    name = pos[0]
+    project = os.path.abspath(pos[1] if len(pos) > 1 else ".")
     wfdir = workflow_dir(name)
     cdir = claude_dir(project)
 
-    if os.path.isdir(cdir) and os.listdir(cdir):
-        die("{} already exists and is not empty -- merge by hand".format(cdir))
+    if read_workflow_file(project):
+        die("{} is already an adopter (.claude/.workflow exists) -- use "
+            "`wf sync`".format(cdir))
+    if os.path.isdir(cdir) and os.listdir(cdir) and not force:
+        die("{} exists and is not empty -- `wf adopt --force` installs the full "
+            "workflow over it (backing up any clobbered core file as "
+            "<file>.pre-adopt), or `wf link` fills only missing files".format(cdir))
     os.makedirs(cdir, exist_ok=True)
+
+    # --force path: displace colliding core files first, before .workflow is
+    # written, so a directory-vs-file `die` leaves nothing behind.
+    backed = _backup_colliding_core(name, cdir) if force else []
 
     write_workflow_file(project, {
         "workflow": name,
@@ -368,21 +419,39 @@ def cmd_adopt(args):
     results = sync_core_files(project, wf, apply=True)
     write_workflow_file(project, wf)
 
-    copied = copy_local_templates(name, cdir)
+    copied, skipped_local = copy_local_templates(name, cdir)
 
     # INIT.md is the first-run interview script -- copy it in too, unless
-    # this workflow has none.
+    # this workflow has none. Back up a differing pre-existing one.
     init_src = os.path.join(wfdir, "INIT.md")
     if os.path.exists(init_src):
         with open(init_src, "rb") as fh:
             blob = fh.read()
-        with open(os.path.join(cdir, "INIT.md"), "wb") as fh:
+        init_dst = os.path.join(cdir, "INIT.md")
+        if os.path.isfile(init_dst) and hash_file(init_dst) != hash_bytes(blob):
+            os.replace(init_dst, init_dst + ".pre-adopt")
+            backed.append("INIT.md")
+        with open(init_dst, "wb") as fh:
             fh.write(blob)
 
     registry_add(project)
     print("adopted {} in {}".format(name, project))
     print("  copied {} core file(s)".format(len(results)))
-    print("  copied local files: {}".format(", ".join(sorted(copied))))
+    print("  copied local files: {}".format(", ".join(sorted(copied)) or "none"))
+    if skipped_local:
+        print("  kept the repo's own: {}".format(", ".join(sorted(skipped_local))))
+        print("  -> INIT.md fills only missing local config; check these by hand")
+        print("     (a stale project.json leaves /check reading blank commands).")
+    if backed:
+        print("  backed up {} pre-existing file(s) as <file>.pre-adopt:".format(
+            len(backed)))
+        for relpath in sorted(backed):
+            print("    {}".format(relpath))
+        print("  -> diff each against the newly-installed version, then delete.")
+        if "settings.json" in backed:
+            print("  -> settings.json is core-owned now (hook wiring + commit/push")
+            print("     deny list). Put the repo's permissions.allow entries and")
+            print("     GH_REPO into .claude/settings.local.json, not back here.")
     print()
     print("Next: open Claude Code in {} and say:".format(project))
     print('  read .claude/INIT.md and follow it')
@@ -429,7 +498,8 @@ def cmd_link(args):
         "core_version": at_version,
         "files": manifest,
     })
-    filled += copy_local_templates(name, cdir)
+    copied_local, _ = copy_local_templates(name, cdir)
+    filled += copied_local
     registry_add(project)
 
     print("linked {} in {}  (core_version={})".format(name, project, at_version))

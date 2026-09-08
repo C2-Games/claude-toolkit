@@ -83,10 +83,13 @@ or edit gate).
 Stdlib Python. `STORE` is resolved with `realpath` (the CLI is normally a
 symlink on PATH). `wf adopt <workflow> [dir]` sets up an **empty** `.claude/`,
 copying `core/` + `local/` in and recording a hash of every core file in
-`.claude/.workflow`. `wf link <workflow> [dir]` does the same for a repo that
-**already has a non-empty `.claude/`**: fills only missing files, records
-`core_version 0` (default; `--at-version=N` overrides) so pending
-`MIGRATIONS.md` blocks still show, leaves any divergent file for `wf diff`.
+`.claude/.workflow`. `wf adopt <workflow> [dir] --force` does the same over a
+**non-empty** `.claude/` -- full core + `INIT.md`, `core_version` at the current
+`VERSION` -- keeping any clobbered file as `<file>.pre-adopt`. `wf link
+<workflow> [dir]` is the light alternative for an existing non-empty `.claude/`:
+fills only missing files, no `INIT.md`, records `core_version 0` (default;
+`--at-version=N` overrides) so pending `MIGRATIONS.md` blocks still show, leaves
+any divergent file for `wf diff`.
 
 `wf sync [--accept] [--all] [dir ...]` git-pulls the store, then reconciles core
 files against the recorded hashes: copies in an untouched update, leaves a
@@ -191,9 +194,10 @@ applies) after a `core/` edit, and `wf sync --accept .` once the workflow
 ## Validating changes locally
 
 - Python: `git ls-files '*.py' | xargs python3 -m py_compile` -- covers
-  `bin/wf`, `workflows/_shared/hooks/*.py`, `workflows/*/core/hooks/*.py`, and
+  `workflows/_shared/hooks/*.py`, `workflows/*/core/hooks/*.py`, and
   `workflows/todo-gated/core/scripts/todos.py` once committed; for uncommitted
-  edits to those, `py_compile` them directly first.
+  edits to those, `py_compile` them directly first. `bin/wf` is extensionless
+  so the glob misses it -- `python3 -m py_compile bin/wf` explicitly.
 - `todos.py`: `py_compile` covers syntax; behavior needs an adopted repo --
   `cd <adopter> && python3 .claude/scripts/todos.py validate`
 - Markdown: `python3 -m pymarkdown --config .pymarkdown.json scan -r <path>`
@@ -201,7 +205,9 @@ applies) after a `core/` edit, and `wf sync --accept .` once the workflow
 - JSON: `python3 -m json.tool .claude-plugin/marketplace.json` /
   `.claude-plugin/plugin.json` (both stay `version`-less)
 - `wf` round-trip: `wf adopt str8-2-main <scratch>/r && wf status`, plus
-  `wf link` into a hand-built non-empty `.claude/`, then `wf diff` / `wf backport`
+  `wf link` and `wf adopt --force` into hand-built non-empty `.claude/` dirs
+  (`--force` must back up a colliding core file as `<file>.pre-adopt` and still
+  land `wf status` on `current`), then `wf diff` / `wf backport`
 - Notify hook: `CLAUDE_PROJECT_DIR=<behind-adopter> python3
   workflows/_shared/hooks/workflow_notify.py </dev/null` emits JSON
   `additionalContext`; a current adopter with a fresh store clone, or no `wf`
