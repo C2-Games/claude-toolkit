@@ -587,6 +587,9 @@ def cmd_sync(args):
     accept = "--accept" in args
     sync_all = "--all" in args
     named = resolve_targets(args)
+    if accept and not named:
+        die("--accept needs an explicit repo dir (it records a version for that "
+            "repo); `wf sync --accept .` or `wf sync --accept <dir>`")
     result = subprocess.run(
         ["git", "-C", STORE, "pull", "--ff-only"],
         capture_output=True, text=True,
