@@ -108,6 +108,21 @@ against the store; `wf backport <repo> <relpath>` copies a repo's edited core
 file back onto the store source (no commit, no `VERSION` bump; warns on a
 `_shared/` target). `wf projects` lists the registry (`.projects`, gitignored).
 
+`wf switch <workflow> [dir]` moves an already-adopted repo to a different
+workflow. Unlike `sync`, it always installs the new workflow's core in full
+-- a core filename shared between two workflows (`commands/check.md`,
+`WORKFLOW.md`, `settings.json`) still differs in content per workflow, and
+preserving a local edit would pair the old workflow's `/check` with the new
+workflow's hand-off command; a locally-edited or old-workflow-unique file is
+kept as `<file>.pre-switch` instead of silently overwritten or dropped.
+`core_version` is set to the target's current `VERSION` (fully caught up, like
+a plain adopt). `local/` templates are filled via the same never-clobber
+`copy_local_templates`, plus an additive `.gitignore` merge, and
+`.claude/.last-check` is deleted (a stale hash could otherwise satisfy the new
+workflow's hand-off command without its review step running). It writes a
+generated `.claude/SWITCH.md` -- see "Conventions when editing templates"
+below.
+
 Any `wf` command given an explicit dir that is a valid adopter enrolls it in
 `.projects`. The `.workflow` file no longer carries a `store` key (an unused
 absolute machine path); `write_workflow_file` strips it on every write.
@@ -156,6 +171,14 @@ instead, and update the relevant `INIT.md` and this section.
   (see "Skills ship as a plugin").
 - Prose style across the repo's docs: `--` not em-dash; tables and Mermaid
   `flowchart TD` for lifecycle diagrams.
+- **Generated docs**: `INIT.md` is a real store file, copied verbatim by
+  `wf adopt`/`wf adopt --force` into every adopter -- editing its wording is a
+  template edit like any other. `SWITCH.md` is different: `wf switch` renders
+  it inline from computed diffs between the old and new workflow, lives in no
+  store file, and is never delivered verbatim -- a wording change is a
+  `bin/wf` edit (`_render_switch_doc` and its `_mechanism_delta` /
+  `_config_gaps` / `_orphaned_local` / `_unfilled_templates` inputs), not a
+  template one.
 
 `workflows/README.md` is the adoption guide, the sync guide, and the per-workflow
 "use it when / don't bother when" selector. `workflows/_shared/README.md`
@@ -208,6 +231,17 @@ applies) after a `core/` edit, and `wf sync --accept .` once the workflow
   `wf link` and `wf adopt --force` into hand-built non-empty `.claude/` dirs
   (`--force` must back up a colliding core file as `<file>.pre-adopt` and still
   land `wf status` on `current`), then `wf diff` / `wf backport`
+- `wf switch` round-trip: `wf adopt str8-2-main <scratch>/r && wf switch
+  issue-gated <scratch>/r` -- str8-2-main-only files gone, issue-gated-only
+  files present, `project.json`/`CLAUDE.md` untouched, `ARCHITECTURE.md`
+  freshly filled, `SWITCH.md` names the missing `project.json`/
+  `settings.local.json` keys, and **`wf diff`/`wf status` immediately after
+  must show no local core edits / `current`** (the check against recording a
+  manifest hash that doesn't match what landed on disk). Also: editing
+  `commands/check.md` before a switch backs it up as `.pre-switch`; a
+  populated `todos.json` survives a `todo-gated -> str8-2-main -> todo-gated`
+  round trip byte-identical; `.claude/scripts/` is pruned when leaving
+  `todo-gated`.
 - Notify hook: `CLAUDE_PROJECT_DIR=<behind-adopter> python3
   workflows/_shared/hooks/workflow_notify.py </dev/null` emits JSON
   `additionalContext`; a current adopter with a fresh store clone, or no `wf`

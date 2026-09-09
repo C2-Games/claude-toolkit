@@ -109,6 +109,7 @@ wf sync <repo>       # pull, then reconcile that repo   (--all for every repo)
 wf status <repo>     # one repo's sync state, no pull
 wf diff <repo>       # unified diff of every core file that repo has edited
 wf backport <repo> <relpath>   # fold that edit back onto the store's core/
+wf switch <workflow> [repo]    # already adopted — move it to another workflow
 ```
 
 A bare `wf sync` writes nothing — every adopted repo you open enrolls itself
@@ -132,6 +133,12 @@ per file:
 acknowledged yet — changes that need a manual step beyond copying a file
 (a new `project.json` key, for example). `wf sync --accept <repo>` records
 those as done once you've handled them.
+
+`wf switch <workflow> <repo>` moves an already-adopted repo to a different
+workflow: it installs the new core in full, removes the old workflow's
+unique files, and writes `.claude/SWITCH.md` — a generated checklist for
+Claude to work through, the way `wf adopt` writes `INIT.md` for a fresh
+onboarding. See [`workflows/README.md`](workflows/README.md) for details.
 
 To fold an ad-hoc fix from one repo back into the store: `wf diff <repo>` to
 see it, `wf backport <repo> <relpath>` to copy it onto `core/` (a `_shared/`

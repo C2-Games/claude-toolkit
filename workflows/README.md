@@ -88,6 +88,7 @@ wf status <repo>        # one repo's sync state + pending MIGRATIONS.md, no pull
 wf sync --accept <repo> # after a MIGRATIONS.md block, record the new version
 wf diff <repo>          # unified diff of every core file this repo has edited
 wf backport <repo> <relpath>  # copy that edited core file back onto the store source
+wf switch <workflow> [repo]   # move an adopted repo to a different workflow
 ```
 
 A bare `wf sync` reports and writes nothing: opening any adopted repo enrolls
@@ -107,6 +108,35 @@ A pure-prose `core/` edit adds no `MIGRATIONS.md` block and needs no
 Every adopted repo also runs a `SessionStart` hook (`workflow_notify.py`, v2+)
 that says when the repo is behind the store or the store clone is stale. It
 only reports; you still run `wf sync` yourself. It needs `bin/wf` on PATH.
+
+## Switching an adopted repo to another workflow
+
+```bash
+wf switch todo-gated          # move the current dir to a different workflow
+wf switch issue-gated <repo>  # or name the repo explicitly
+```
+
+Unlike `wf sync`, a switch always installs the new workflow's core in full --
+every core filename shared between two workflows (`commands/check.md`,
+`WORKFLOW.md`, `settings.json`) still differs in content, and preserving a
+locally-edited one would pair the old workflow's `/check` with the new
+workflow's hand-off command. A file the repo edited is kept as
+`<file>.pre-switch` rather than silently overwritten; a file unique to the old
+workflow is removed if untouched, backed up the same way if not. `local/`
+files (`project.json`, `settings.local.json`, `CLAUDE.md`, and anything the new
+workflow needs that didn't exist yet, like `ARCHITECTURE.md` or `todos.json`)
+are never clobbered, and `.gitignore` gains the new workflow's runtime-file
+patterns without losing the old ones. `.claude/.last-check` is deleted, since
+a check hash from the old workflow could otherwise satisfy the new one's
+hand-off command without its review step ever running.
+
+The command writes `.claude/SWITCH.md` -- a generated checklist (mechanism
+changes, backups to review, new templates that still need filling, config
+keys the new workflow reads that this repo hasn't set, orphaned local state,
+`.gitignore` changes, and next steps). Open Claude Code and say **"read
+`.claude/SWITCH.md` and follow it"**, then restart the session before working
+under the new workflow -- `settings.json` (hook wiring, the commit/push deny
+list) is only read at session start.
 
 ---
 

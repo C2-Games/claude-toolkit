@@ -27,6 +27,14 @@ Subcommands:
                                  re-adopting (fills only missing files);
                                  --at-version=N sets the acknowledged version
                                  (default 0, so pending MIGRATIONS.md still show)
+  wf switch <workflow> [dir]    move an already-adopted repo to a different
+                                 workflow: installs the new core in full (a
+                                 locally-edited file is kept as
+                                 <file>.pre-switch), removes the old workflow's
+                                 unique files, fills missing local templates,
+                                 merges .gitignore, and writes .claude/SWITCH.md
+                                 -- a generated checklist briefing Claude on
+                                 the transition
   wf status [--porcelain] [dir ...]
                                 show sync state + pending MIGRATIONS.md blocks
   wf sync [--accept] [--all] [dir ...]
@@ -354,6 +362,23 @@ def copy_local_templates(name, cdir):
     return copied, skipped
 
 
+def _assert_writable_paths(cdir, relpaths, cmd_label):
+    """Die before anything is written if a core leaf path is a directory, or
+    an ancestor dir of one is a regular file -- `copy_one`'s open()/makedirs
+    can resolve neither. `cmd_label` names the command in the error, e.g.
+    "wf adopt --force" or "wf switch"."""
+    for relpath in relpaths:
+        parts = relpath.split("/")
+        for depth in range(1, len(parts) + 1):
+            node = os.path.join(cdir, os.sep.join(parts[:depth]))
+            leaf = depth == len(parts)
+            if os.path.exists(node) and os.path.isdir(node) == leaf:
+                die("{} exists but is {} -- resolve by hand before "
+                    "`{}`".format(
+                        node, "a directory" if leaf else "not a directory",
+                        cmd_label))
+
+
 def _backup_colliding_core(name, cdir):
     """Move aside every existing .claude/ file a core file is about to
     overwrite whose content differs from the store's, renaming it to
@@ -361,20 +386,12 @@ def _backup_colliding_core(name, cdir):
     written if a core leaf path is a directory, or an ancestor dir of one is a
     regular file -- `copy_one` cannot resolve either."""
     core_dir = os.path.join(STORE, "workflows", name, "core")
+    files = sorted(iter_core_files(core_dir))
+    _assert_writable_paths(cdir, [relpath for relpath, _src in files],
+                            "wf adopt --force")
     backed = []
-    for relpath, src in sorted(iter_core_files(core_dir)):
+    for relpath, src in files:
         dst = os.path.join(cdir, relpath.replace("/", os.sep))
-        # The leaf must not be a directory, and every ancestor under cdir that
-        # already exists must be one -- `copy_one`'s open()/makedirs can resolve
-        # neither, and it runs after .workflow is written.
-        parts = relpath.split("/")
-        for depth in range(1, len(parts) + 1):
-            node = os.path.join(cdir, os.sep.join(parts[:depth]))
-            leaf = depth == len(parts)
-            if os.path.exists(node) and os.path.isdir(node) == leaf:
-                die("{} exists but is {} -- resolve by hand before "
-                    "`wf adopt --force`".format(
-                        node, "a directory" if leaf else "not a directory"))
         if os.path.isfile(dst) and hash_file(dst) != hash_file(src):
             os.replace(dst, dst + ".pre-adopt")
             backed.append(relpath)
@@ -509,6 +526,625 @@ def cmd_link(args):
     print("Next: `wf status {0}` (works through pending MIGRATIONS.md),".format(project))
     print("      `wf diff {0}` to review pre-existing core divergence,".format(project))
     print("      then `wf sync --accept {0}` once you're done.".format(project))
+
+
+# ---- switch ---------------------------------------------------------------
+#
+# `wf switch <workflow> [dir]` moves an already-adopted repo from its current
+# workflow to a different one. Unlike `wf sync` (which never overwrites a
+# locally-edited core file), a switch always installs the new workflow's core
+# in full -- every core filename is shared or unique per pair, but
+# `commands/check.md` differs in *every* pair, and CLAUDE.md's parameter
+# discipline requires its freshness-hash line to stay byte-identical with
+# whichever hand-off command (`/ship`|`/pr`|`/finish`) reads
+# `.claude/.last-check`. Preserving an edited `check.md` would pair the old
+# workflow's check with the new workflow's hand-off, so a locally-edited file
+# is backed up as `<file>.pre-switch` rather than kept in place.
+
+_GATE_RE = re.compile(r"_gate\.py$")
+
+_CONFIG_KEY_GLOSS = {
+    "find_expr": "shell command emitting the NUL-separated source file set",
+    "format_cmd": "formatter command run by /check",
+    "lint_cmd": "linter command run by /check",
+    "test_cmd": "test command run by /check",
+    "doc_drift_watch": "extra paths the doc_drift hook should watch",
+    "issue_assignees": "default assignee(s) for new issues",
+    "uses_milestones": "whether /new-issue offers a milestone",
+    "env.GH_REPO": "OWNER/REPO for gh, if the git remote doesn't already say it",
+}
+
+_ORPHAN_NOTES = {
+    "todos.json": "your tracked backlog -- keep it if you may switch back.",
+    "worktrees/": "may contain real checkouts -- inspect before removing anything.",
+}
+_ORPHAN_DEFAULT_NOTE = (
+    "no longer read by {new} -- safe to delete once you've confirmed nothing "
+    "outside .claude/ references it."
+)
+
+
+def _prune_empty_dirs(cdir, relpaths):
+    """Best-effort rmdir of each removed file's now-empty ancestor dirs, never
+    above cdir. A leftover __pycache__/ just means nothing happens."""
+    cdir_abs = os.path.abspath(cdir)
+    for relpath in relpaths:
+        node = os.path.dirname(os.path.join(cdir, relpath.replace("/", os.sep)))
+        while os.path.abspath(node).startswith(cdir_abs + os.sep):
+            try:
+                os.rmdir(node)
+            except OSError:
+                break
+            node = os.path.dirname(node)
+
+
+def _merge_gitignore(name, cdir):
+    """Append the new workflow's ignore patterns the repo's .claude/.gitignore
+    doesn't already have. Returns the patterns added (order preserved,
+    deduplicated). Comments are not copied and nothing already there is ever
+    removed."""
+    src = os.path.join(STORE, "workflows", name, "local", ".gitignore")
+    dst = os.path.join(cdir, ".gitignore")
+    if not os.path.isfile(dst) or not os.path.isfile(src):
+        return []
+
+    def patterns(path):
+        with open(path, "r", encoding="utf-8", errors="replace") as handle:
+            return [ln.strip() for ln in handle
+                    if ln.strip() and not ln.lstrip().startswith("#")]
+
+    have = set(patterns(dst))
+    seen = set()
+    missing = [p for p in patterns(src)
+               if p not in have and not (p in seen or seen.add(p))]
+    if not missing:
+        return []
+
+    with open(dst, "r", encoding="utf-8", errors="replace") as handle:
+        text = handle.read()
+    if text and not text.endswith("\n"):
+        text += "\n"
+    text += "\n# Added by `wf switch` -- runtime state for the {} workflow.\n".format(name)
+    text += "\n".join(missing) + "\n"
+    with open(dst, "w", encoding="utf-8") as handle:
+        handle.write(text)
+    return missing
+
+
+def _flatten(data, prefix=""):
+    out = {}
+    for key, value in data.items():
+        dotted = "{}.{}".format(prefix, key) if prefix else key
+        if isinstance(value, dict):
+            out.update(_flatten(value, dotted))
+        else:
+            out[dotted] = value
+    return out
+
+
+def _config_gaps(name, cdir):
+    """{filename: {"missing": [(dotted, template_value)], "unused": [dotted],
+    "error": str|None}} for project.json / settings.local.json against
+    <name>'s local/ templates. Reports only -- never writes a value; an
+    absent key is safer than an invented one (e.g. a missing env.GH_REPO
+    falls back to the git remote, but a written "OWNER/REPO" is always
+    wrong)."""
+    gaps = {}
+    for fname in ("project.json", "settings.local.json"):
+        template_path = os.path.join(STORE, "workflows", name, "local", fname)
+        repo_path = os.path.join(cdir, fname)
+        entry = {"missing": [], "unused": [], "error": None}
+        try:
+            with open(template_path) as handle:
+                template = _flatten(json.load(handle))
+        except (OSError, ValueError):
+            template = {}
+        try:
+            with open(repo_path) as handle:
+                repo = _flatten(json.load(handle))
+        except (OSError, ValueError) as exc:
+            entry["error"] = str(exc)
+            gaps[fname] = entry
+            continue
+        entry["missing"] = [(k, template[k]) for k in template if k not in repo]
+        entry["unused"] = [k for k in repo if k not in template]
+        gaps[fname] = entry
+    return gaps
+
+
+def _local_relpaths(name):
+    localdir = os.path.join(STORE, "workflows", name, "local")
+    found = set()
+    for root, _dirs, files in os.walk(localdir):
+        for fname in files:
+            found.add(os.path.relpath(
+                os.path.join(root, fname), localdir).replace(os.sep, "/"))
+    return found
+
+
+def _gitignore_literal_patterns(name):
+    """Non-glob .gitignore lines for a workflow's local/ template (skips any
+    line containing *?[! -- those are generic scratch patterns, not
+    workflow-specific runtime paths)."""
+    path = os.path.join(STORE, "workflows", name, "local", ".gitignore")
+    try:
+        with open(path) as handle:
+            lines = handle.readlines()
+    except OSError:
+        return set()
+    return {ln.strip() for ln in lines
+            if ln.strip() and not ln.lstrip().startswith("#")
+            and not any(c in ln for c in "*?[!")}
+
+
+def _orphaned_local(old_name, new_name, cdir):
+    """[(relpath, note)] for local files/paths the old workflow used that the
+    new one doesn't, and that still exist under cdir. Never deletes
+    anything."""
+    found = []
+    for relpath in sorted(_local_relpaths(old_name) - _local_relpaths(new_name)):
+        if relpath == ".gitignore":
+            continue  # merged, not orphaned, as a whole file
+        if os.path.exists(os.path.join(cdir, relpath.replace("/", os.sep))):
+            found.append(relpath)
+
+    old_patterns = _gitignore_literal_patterns(old_name)
+    new_patterns = _gitignore_literal_patterns(new_name)
+    for pattern in sorted(old_patterns - new_patterns):
+        if pattern in found:
+            continue
+        target = os.path.join(cdir, pattern.replace("/", os.sep).rstrip("/"))
+        if os.path.exists(target):
+            found.append(pattern)
+
+    return [(relpath, _ORPHAN_NOTES.get(relpath, _ORPHAN_DEFAULT_NOTE.format(new=new_name)))
+            for relpath in found]
+
+
+def _unfilled_templates(copied_local, cdir):
+    """[(relpath, note)] of local templates this switch just created that
+    still need an interview, in copied_local order."""
+    notes = []
+    for relpath in copied_local:
+        path = os.path.join(cdir, relpath.replace("/", os.sep))
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as handle:
+                text = handle.read()
+        except OSError:
+            text = ""
+        if "ARCHITECTURE-TEMPLATE-UNFILLED" in text:
+            note = (
+                "still a template -- `architecture-checker` no-ops until the "
+                "marker line is gone. Gather 2-5 concrete dependency-direction "
+                "/ module-boundary rules, or get an explicit decision to leave "
+                "it unconfigured."
+            )
+        elif relpath == "todos.json":
+            note = (
+                "empty backlog -- the correct starting state. Add work "
+                "through /create-todo, never by hand-editing this file."
+            )
+        else:
+            note = "created from the new workflow's template -- check it matches this repo."
+        notes.append((relpath, note))
+    return notes
+
+
+def _kind_names(relpaths, prefix, suffix):
+    return sorted(
+        relpath[len(prefix):-len(suffix)]
+        for relpath in relpaths
+        if relpath.startswith(prefix) and relpath.endswith(suffix)
+    )
+
+
+def _deny_has_commit(settings_path):
+    try:
+        with open(settings_path) as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    deny = data.get("permissions", {}).get("deny", [])
+    return any("git commit" in entry for entry in deny)
+
+
+def _mechanism_delta(old_files, new_files, old_name, new_name):
+    """Human statements (nothing hard-coded per workflow pair -- all derived
+    from the two core/ dirs and their settings.core.json) about what a
+    switch gains or loses: commands/agents/hooks/scripts, an edit gate, and
+    whether git commit/push moved between permissions.allow and .deny."""
+    old_set, new_set = set(old_files), set(new_files)
+    delta = {
+        "commands_added": _kind_names(new_set - old_set, "commands/", ".md"),
+        "commands_removed": _kind_names(old_set - new_set, "commands/", ".md"),
+        "agents_added": _kind_names(new_set - old_set, "agents/", ".md"),
+        "agents_removed": _kind_names(old_set - new_set, "agents/", ".md"),
+        "hooks_added": _kind_names(new_set - old_set, "hooks/", ".py"),
+        "hooks_removed": _kind_names(old_set - new_set, "hooks/", ".py"),
+        "scripts_added": sorted(r for r in new_set - old_set if r.startswith("scripts/")),
+        "scripts_removed": sorted(r for r in old_set - new_set if r.startswith("scripts/")),
+        "gate": None,
+        "handoff": None,
+    }
+    old_gates = {r for r in old_set if _GATE_RE.search(r)}
+    new_gates = {r for r in new_set if _GATE_RE.search(r)}
+    if new_gates - old_gates:
+        gate = sorted(new_gates - old_gates)[0].rsplit("/", 1)[-1]
+        delta["gate"] = (
+            "an edit gate ({}) is now active: edits to tracked files are "
+            "denied until the workflow's start command records a unit of "
+            "work.".format(gate)
+        )
+    elif old_gates - new_gates:
+        gate = sorted(old_gates - new_gates)[0].rsplit("/", 1)[-1]
+        delta["gate"] = "the edit gate ({}) is gone: edits are no longer blocked.".format(gate)
+
+    old_deny = _deny_has_commit(
+        os.path.join(STORE, "workflows", old_name, "core", "settings.core.json"))
+    new_deny = _deny_has_commit(
+        os.path.join(STORE, "workflows", new_name, "core", "settings.core.json"))
+    if old_deny is not None and new_deny is not None and old_deny != new_deny:
+        if new_deny:
+            delta["handoff"] = "`git commit`/`git push` are now denied -- the workflow hands you the commands."
+        else:
+            delta["handoff"] = "this workflow's ship command commits and pushes itself."
+    return delta
+
+
+def _render_switch_doc(old_name, new_name, mech, plan_backup, copied_local,
+                        unfilled, cfg_gaps, orphans, ignore_added,
+                        dropped_last_check, stale_init, new_files,
+                        clobbered_backups):
+    lines = []
+    lines.append("# SWITCH -- {} -> {}".format(old_name, new_name))
+    lines.append("")
+    lines.append(
+        "`wf switch {}` has already run in this repo. Every core file "
+        "(`commands/`, `agents/`, `hooks/`, `WORKFLOW.md`, `settings.json`) "
+        "is now {}'s, `.claude/.workflow` records it, and {}'s unique files "
+        "are gone. What is left is the judgement work: config keys {} reads "
+        "that this repo has never set, files the old workflow left behind, "
+        "and backups to review. Work the checklist below, then **delete "
+        "this file**.".format(new_name, new_name, old_name, new_name)
+    )
+    lines.append("")
+
+    lines.append("## 1. What changed mechanically")
+    lines.append("")
+
+    def bullet(label, items, fmt):
+        lines.append("- {}: {}".format(
+            label, ", ".join(fmt(i) for i in items) if items else "(none)"))
+
+    bullet("Commands added", mech["commands_added"], lambda n: "`/{}`".format(n))
+    bullet("Commands removed", mech["commands_removed"], lambda n: "`/{}`".format(n))
+    bullet("Agents added", mech["agents_added"], lambda n: "`{}`".format(n))
+    bullet("Agents removed", mech["agents_removed"], lambda n: "`{}`".format(n))
+    bullet("Hooks added", mech["hooks_added"], lambda n: "`{}.py`".format(n))
+    bullet("Hooks removed", mech["hooks_removed"], lambda n: "`{}.py`".format(n))
+    if mech["scripts_added"] or mech["scripts_removed"]:
+        bullet("Scripts added", mech["scripts_added"], lambda n: "`{}`".format(n))
+        bullet("Scripts removed", mech["scripts_removed"], lambda n: "`{}`".format(n))
+    lines.append(
+        "- `WORKFLOW.md`, `commands/check.md`, and `settings.json` were "
+        "replaced with {}'s versions.".format(new_name))
+    if mech["gate"]:
+        lines.append("- " + mech["gate"])
+    if mech["handoff"]:
+        lines.append("- " + mech["handoff"])
+    lines.append("")
+
+    lines.append("## 2. Backed up as `.pre-switch`")
+    lines.append("")
+    if plan_backup:
+        lines.append(
+            "These files were locally edited (or the repo's own), so they "
+            "were kept instead of being overwritten or deleted:")
+        lines.append("")
+        for relpath, _reason in sorted(plan_backup):
+            flag = " -- **overwrote an earlier, unreviewed `.pre-switch`**" \
+                if relpath in clobbered_backups else ""
+            lines.append("- `{}.pre-switch`{}".format(relpath, flag))
+        if clobbered_backups:
+            lines.append("")
+            lines.append(
+                "A prior switch through this repo left a `.pre-switch` file "
+                "that was never reviewed, and this run replaced it -- its "
+                "content is gone. Nothing to do about it now; just know "
+                "future backups can be lost the same way if `.pre-switch` "
+                "files pile up unreviewed across repeated switches.")
+        lines.append("")
+        lines.append(
+            "Diff each against the file that replaced it. If an edit is "
+            "worth keeping and the new workflow still ships that file, that "
+            "is `wf backport` territory -- tell the user rather than "
+            "re-applying it here, since a hand-edited `check.md` "
+            "desynchronises the freshness hash from the hand-off command. "
+            "Delete each `.pre-switch` file once reviewed.")
+    else:
+        lines.append("(none)")
+    lines.append("")
+
+    lines.append("## 3. New files created from {}'s templates".format(new_name))
+    lines.append("")
+    if unfilled:
+        lines.append(
+            "`wf switch` filled these because {} needs them and this repo "
+            "had no such file. They are templates, not filled "
+            "config:".format(new_name))
+        lines.append("")
+        for relpath, note in unfilled:
+            lines.append("- `.claude/{}` -- {}".format(relpath, note))
+    else:
+        lines.append("(none)")
+    lines.append("")
+
+    lines.append("## 4. Config to fill")
+    lines.append("")
+    missing_rows, unused_keys = [], []
+    parse_errors = []
+    for fname, gap in sorted(cfg_gaps.items()):
+        if gap["error"]:
+            parse_errors.append((fname, gap["error"]))
+            continue
+        for dotted, value in gap["missing"]:
+            missing_rows.append((fname, dotted, value))
+        unused_keys.extend("{} ({})".format(dotted, fname) for dotted in gap["unused"])
+    for fname, error in parse_errors:
+        lines.append("- `.claude/{}` could not be parsed ({}) -- check it by hand.".format(fname, error))
+    if missing_rows:
+        lines.append(
+            "{} reads keys this repo's config does not have. **Do not "
+            "invent values** -- run an interview for each, then write "
+            "them:".format(new_name))
+        lines.append("")
+        lines.append("| file | key | template default | what it is |")
+        lines.append("|---|---|---|---|")
+        for fname, dotted, value in missing_rows:
+            gloss = _CONFIG_KEY_GLOSS.get(dotted, "see `.claude/WORKFLOW.md`")
+            lines.append("| `.claude/{}` | `{}` | `{}` | {} |".format(
+                fname, dotted, json.dumps(value), gloss))
+    elif not parse_errors:
+        lines.append(
+            "(none -- this repo's config already covers everything {} "
+            "reads)".format(new_name))
+    if unused_keys:
+        lines.append("")
+        lines.append(
+            "Keys {} does not read (harmless; remove if you like): {}".format(
+                new_name, ", ".join("`{}`".format(k) for k in unused_keys)))
+    lines.append("")
+    lines.append(
+        "Also check `permissions.allow` in `.claude/settings.local.json` "
+        "still covers this repo's format / lint / test executables -- the "
+        "switch did not touch it.")
+    lines.append("")
+
+    lines.append("## 5. Orphaned local state")
+    lines.append("")
+    if orphans:
+        lines.append("Left in place on purpose -- nothing here was deleted:")
+        lines.append("")
+        for relpath, note in orphans:
+            lines.append("- `.claude/{}` -- {}".format(relpath, note))
+    else:
+        lines.append("(none)")
+    lines.append("")
+
+    lines.append("## 6. `.gitignore`")
+    lines.append("")
+    if ignore_added:
+        lines.append("Appended: {}".format(
+            ", ".join("`{}`".format(p) for p in ignore_added)))
+    else:
+        lines.append("(no patterns needed adding)")
+    lines.append("")
+
+    lines.append("## 7. Next")
+    lines.append("")
+    if dropped_last_check:
+        lines.append(
+            "- `.claude/.last-check` was deleted -- a check hash from {}'s "
+            "`/check` would otherwise satisfy {}'s hand-off command without "
+            "{}'s review step ever having run. **Run `/check` again** "
+            "before the next hand-off.".format(old_name, new_name, new_name))
+    if stale_init:
+        lines.append(
+            "- An unfinished `.claude/INIT.md` is still here -- finish or "
+            "delete it; this file supersedes it for everything the switch "
+            "already did.")
+    lines.append(
+        "- **Restart the Claude Code session** before working under the "
+        "new workflow. `settings.json` (hook wiring, the commit/push deny "
+        "list) is read at session start, so the old workflow's gates are "
+        "still live in this one.")
+    commands = sorted(
+        "/" + r[len("commands/"):-len(".md")]
+        for r in new_files if r.startswith("commands/") and r.endswith(".md"))
+    lines.append(
+        "- Read `.claude/WORKFLOW.md` -- it is the operating manual for {} "
+        "and names the entry command. The commands now available are: "
+        "{}.".format(new_name, ", ".join("`{}`".format(c) for c in commands)))
+    lines.append(
+        "- `git add .claude && git commit` -- everything under `.claude/` "
+        "is a real tracked file.")
+    lines.append(
+        "- **Delete this file** (`.claude/SWITCH.md`), then report a "
+        "summary: what was set, what was deleted, what still needs the "
+        "user.")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def cmd_switch(args):
+    flags = [a for a in args if a.startswith("-")]
+    pos = [a for a in args if not a.startswith("-")]
+    if not pos:
+        die("usage: wf switch <workflow> [dir]")
+    for flag in flags:
+        die("unknown flag {!r}".format(flag))
+    name = pos[0]
+    project = os.path.abspath(pos[1] if len(pos) > 1 else ".")
+    workflow_dir(name)  # validates the workflow exists
+    cdir = claude_dir(project)
+
+    wf = read_workflow_file(project)
+    if not wf:
+        die("{} is not an adopter (no .claude/.workflow) -- use `wf adopt "
+            "{} {}` or `wf link {} {}`".format(cdir, name, project, name, project))
+    old_name = wf["workflow"]
+    if old_name == name:
+        die("{} is already on {!r} -- use `wf sync {}` to update it".format(
+            project, name, project))
+
+    # Warn (don't block) if the repo is behind on its *current* workflow --
+    # switching abandons those pending changes rather than merging them.
+    stale_results = sync_core_files(project, wf, apply=False)
+    stale_attention = sum(1 for t in stale_results.values() if t in ATTENTION_TAGS)
+    old_sv, old_pv = store_version(old_name), wf["core_version"]
+    if old_pv < old_sv or stale_attention:
+        print("NOTE: {} is BEHIND {} (v{}->v{}) with {} file(s) needing "
+              "attention.".format(project, old_name, old_pv, old_sv, stale_attention))
+        print("      Those pending changes are being abandoned, not merged. "
+              "Ctrl-C now and run `wf sync {}` first if you wanted "
+              "them.".format(project))
+
+    if git_run("-C", project, "status", "--porcelain", "--", ".claude"):
+        print("NOTE: .claude/ has uncommitted changes. Commit them before "
+              "switching -- this rewrites core files in place, and a dirty "
+              "tree makes the switch impossible to review as a diff.")
+
+    old_core = os.path.join(STORE, "workflows", old_name, "core")
+    new_core = os.path.join(STORE, "workflows", name, "core")
+    old_manifest = dict(wf.get("files", {}))
+    old_files = dict(iter_core_files(old_core))
+    new_files = dict(iter_core_files(new_core))
+
+    _assert_writable_paths(cdir, sorted(new_files), "wf switch")
+
+    plan_backup = []  # (relpath, reason)
+    plan_write = []   # (relpath, src)
+    plan_remove = []  # relpath
+    manifest = {}
+    tags = {}
+
+    for relpath in sorted(set(old_manifest) | set(old_files) | set(new_files)):
+        base = old_manifest.get(relpath)
+        local_path = os.path.join(cdir, relpath.replace("/", os.sep))
+        local_hash = hash_file(local_path)
+        new_src = new_files.get(relpath)
+        new_hash = hash_file(new_src)
+
+        if new_src is not None:
+            if local_hash == new_hash:
+                tag = "same"
+            elif local_hash is None:
+                tag = "added"
+                plan_write.append((relpath, new_src))
+            elif local_hash == base:
+                tag = "updated"
+                plan_write.append((relpath, new_src))
+            else:
+                tag = "replaced-backup"
+                plan_backup.append((relpath, "replaced"))
+                plan_write.append((relpath, new_src))
+            manifest[relpath] = new_hash
+        else:
+            if local_hash is None:
+                tag = "gone"
+            elif local_hash == base:
+                tag = "removed"
+                plan_remove.append(relpath)
+            else:
+                tag = "removed-backup"
+                plan_backup.append((relpath, "removed"))
+        tags[relpath] = tag
+
+    # Apply in passes -- all backups, then all writes, then all removals --
+    # mirroring _backup_colliding_core's "all backups before any write" shape.
+    clobbered_backups = []
+    for relpath, _reason in plan_backup:
+        dst = os.path.join(cdir, relpath.replace("/", os.sep))
+        backup_dst = dst + ".pre-switch"
+        if os.path.exists(backup_dst):
+            # An unreviewed backup from a prior switch -- os.replace would
+            # silently discard it. That's the one case where "nothing is
+            # lost" doesn't hold on its own, so say so.
+            clobbered_backups.append(relpath)
+        os.replace(dst, backup_dst)
+    for relpath, src in plan_write:
+        copy_one(src, os.path.join(cdir, relpath.replace("/", os.sep)))
+    for relpath in plan_remove:
+        try:
+            os.remove(os.path.join(cdir, relpath.replace("/", os.sep)))
+        except OSError:
+            pass
+    _prune_empty_dirs(cdir, plan_remove)
+
+    last_check = os.path.join(cdir, ".last-check")
+    dropped_last_check = os.path.isfile(last_check)
+    if dropped_last_check:
+        os.remove(last_check)
+
+    # Written after the file passes succeed: a mid-apply exception then
+    # leaves the old (now-inaccurate) manifest, and `wf status`/`wf diff`
+    # loudly surface the mess rather than silently recording a lie.
+    write_workflow_file(project, {
+        "workflow": name,
+        "core_version": store_version(name),
+        "files": manifest,
+    })
+
+    copied_local, kept_local = copy_local_templates(name, cdir)
+    ignore_added = _merge_gitignore(name, cdir)
+
+    cfg_gaps = _config_gaps(name, cdir)
+    orphans = _orphaned_local(old_name, name, cdir)
+    mech = _mechanism_delta(old_files, new_files, old_name, name)
+    unfilled = _unfilled_templates(copied_local, cdir)
+    stale_init = os.path.isfile(os.path.join(cdir, "INIT.md"))
+
+    switch_path = os.path.join(cdir, "SWITCH.md")
+    if os.path.isfile(switch_path):
+        os.replace(switch_path, switch_path + ".pre-switch")
+    doc = _render_switch_doc(
+        old_name, name, mech, plan_backup, copied_local, unfilled, cfg_gaps,
+        orphans, ignore_added, dropped_last_check, stale_init, new_files,
+        clobbered_backups,
+    )
+    with open(switch_path, "w") as handle:
+        handle.write(doc)
+
+    registry_add(project)
+
+    counts = Counter(tags.values())
+    print("switched {}: {} -> {}".format(project, old_name, name))
+    print("  core files: {}".format(
+        ", ".join("{}={}".format(t, n) for t, n in sorted(counts.items()))))
+    if plan_backup:
+        print("  backed up {} file(s) as <file>.pre-switch:".format(len(plan_backup)))
+        for relpath, _reason in sorted(plan_backup):
+            print("    {}".format(relpath))
+    if clobbered_backups:
+        print("  WARNING: overwrote an unreviewed .pre-switch from an earlier "
+              "switch for: {}".format(", ".join(sorted(clobbered_backups))))
+    print("  copied local files: {}".format(", ".join(sorted(copied_local)) or "none"))
+    print("  kept the repo's own: {}".format(", ".join(sorted(kept_local)) or "none"))
+    if ignore_added:
+        print("  .gitignore: added {} pattern(s) ({})".format(
+            len(ignore_added), ", ".join(ignore_added)))
+    if dropped_last_check:
+        print("  dropped .claude/.last-check -- re-run /check before the next hand-off")
+    gap_bits = [
+        "{} ({} key(s))".format(fname, len(gap["missing"]))
+        for fname, gap in sorted(cfg_gaps.items()) if gap["missing"]
+    ]
+    print("  config needing attention: {}".format(", ".join(gap_bits) or "none"))
+    print("  orphaned local state left in place: {}".format(
+        ", ".join(relpath for relpath, _note in orphans) or "none"))
+    print()
+    print("Next: open Claude Code in {} and say:".format(project))
+    print("  read .claude/SWITCH.md and follow it")
 
 
 DIFF_TAGS = {"local-edit", "conflict", "new-conflict", "converged"}
@@ -734,6 +1370,7 @@ def cmd_projects(_args):
 COMMANDS = {
     "adopt": cmd_adopt,
     "link": cmd_link,
+    "switch": cmd_switch,
     "status": cmd_status,
     "sync": cmd_sync,
     "diff": cmd_diff,
